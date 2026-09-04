@@ -1,0 +1,12 @@
+[project]
+name = "materiality-engine"
+version = "0.1.0"
+description = "Filing materiality & diligence agent: detects and classifies material changes across sequential SEC filings"
+requires-python = ">=3.12"
+dependencies = []
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "ruff>=0.16.6",
+]
