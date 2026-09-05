@@ -1,6 +1,10 @@
 import pytest
 
-from src.connectors.edgar import EDGARConnector, TickerNotFoundError
+from src.connectors.edgar import (
+    EDGARConnector,
+    NoFilingsFoundError,
+    TickerNotFoundError,
+)
 
 
 class _StubResponse:
@@ -74,3 +78,100 @@ def test_missing_user_agent_raises(monkeypatch):
 
     with pytest.raises(RuntimeError):
         EDGARConnector()
+
+
+SUBMISSIONS_URL = "https://data.sec.gov/submissions/CIK0000320193.json"
+
+
+def _submissions_response(recent_filings: dict, files: list | None = None):
+    return _StubResponse(
+        json_data={"filings": {"recent": recent_filings, "files": files or []}}
+    )
+
+
+def _connector_with(session) -> EDGARConnector:
+    return EDGARConnector(user_agent="Test test@example.com", session=session)
+
+
+def test_get_recent_filings_happy_path():
+    recent = {
+        "form": ["10-K", "10-Q", "10-K", "10-K"],
+        "filingDate": ["2025-11-01", "2025-08-01", "2024-11-01", "2023-11-01"],
+        "accessionNumber": [
+            "0000320193-25-000079",
+            "0000320193-25-000050",
+            "0000320193-24-000079",
+            "0000320193-23-000079",
+        ],
+        "primaryDocument": [
+            "aapl-20250927.htm",
+            "aapl-20250628.htm",
+            "aapl-20240928.htm",
+            "aapl-20230930.htm",
+        ],
+    }
+    session = _StubSession(
+        {
+            TICKER_MAP_URL: _StubResponse(json_data=SAMPLE_TICKER_MAP),
+            SUBMISSIONS_URL: _submissions_response(recent),
+        }
+    )
+    connector = _connector_with(session)
+
+    filings = connector.get_recent_filings("AAPL", form_type="10-K", count=2)
+
+    assert [f.filing_date for f in filings] == ["2025-11-01", "2024-11-01"]
+    assert filings[0].accession_number == "0000320193-25-000079"
+    assert filings[0].source_url == (
+        "https://www.sec.gov/Archives/edgar/data/320193/"
+        "000032019325000079/aapl-20250927.htm"
+    )
+
+
+def test_get_recent_filings_falls_back_to_paginated_files():
+    recent = {
+        "form": ["10-K"],
+        "filingDate": ["2025-11-01"],
+        "accessionNumber": ["0000320193-25-000079"],
+        "primaryDocument": ["aapl-20250927.htm"],
+    }
+    older_page_url = "https://data.sec.gov/submissions/CIK0000320193-submissions-001.json"
+    older_page = {
+        "form": ["10-K"],
+        "filingDate": ["2024-11-01"],
+        "accessionNumber": ["0000320193-24-000079"],
+        "primaryDocument": ["aapl-20240928.htm"],
+    }
+    session = _StubSession(
+        {
+            TICKER_MAP_URL: _StubResponse(json_data=SAMPLE_TICKER_MAP),
+            SUBMISSIONS_URL: _submissions_response(
+                recent, files=[{"name": "CIK0000320193-submissions-001.json"}]
+            ),
+            older_page_url: _StubResponse(json_data=older_page),
+        }
+    )
+    connector = _connector_with(session)
+
+    filings = connector.get_recent_filings("AAPL", form_type="10-K", count=2)
+
+    assert [f.filing_date for f in filings] == ["2025-11-01", "2024-11-01"]
+
+
+def test_get_recent_filings_raises_when_not_enough_found():
+    recent = {
+        "form": ["10-K"],
+        "filingDate": ["2025-11-01"],
+        "accessionNumber": ["0000320193-25-000079"],
+        "primaryDocument": ["aapl-20250927.htm"],
+    }
+    session = _StubSession(
+        {
+            TICKER_MAP_URL: _StubResponse(json_data=SAMPLE_TICKER_MAP),
+            SUBMISSIONS_URL: _submissions_response(recent),
+        }
+    )
+    connector = _connector_with(session)
+
+    with pytest.raises(NoFilingsFoundError):
+        connector.get_recent_filings("AAPL", form_type="10-K", count=2)

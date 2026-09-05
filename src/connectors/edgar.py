@@ -34,6 +34,23 @@ class _RateLimiter:
         self._last_call = time.monotonic()
 
 
+def _filter_matching_filings(parallel_arrays: dict, form_type: str) -> list[dict]:
+    """SEC returns filings.recent (and each paginated `files[]` entry) as
+    parallel arrays keyed by field name, same index = same filing. Reshape
+    into one dict per filing and keep only exact form_type matches."""
+    forms = parallel_arrays["form"]
+    return [
+        {
+            "form": forms[i],
+            "filingDate": parallel_arrays["filingDate"][i],
+            "accessionNumber": parallel_arrays["accessionNumber"][i],
+            "primaryDocument": parallel_arrays["primaryDocument"][i],
+        }
+        for i in range(len(forms))
+        if forms[i] == form_type
+    ]
+
+
 def _require_user_agent_from_env() -> str:
     user_agent = os.environ.get("EDGAR_USER_AGENT")
     if not user_agent:
@@ -74,7 +91,44 @@ class EDGARConnector:
     def get_recent_filings(
         self, ticker: str, form_type: str = "10-K", count: int = 2
     ) -> list[FilingMetadata]:
-        raise NotImplementedError
+        ticker = ticker.upper()
+        cik = self.resolve_cik(ticker)
+        submissions = self._get(SUBMISSIONS_URL_TMPL.format(cik=cik)).json()
+
+        matches = _filter_matching_filings(submissions["filings"]["recent"], form_type)
+
+        for page in submissions["filings"].get("files", []):
+            if len(matches) >= count:
+                break
+            page_url = f"https://data.sec.gov/submissions/{page['name']}"
+            page_data = self._get(page_url).json()
+            matches.extend(_filter_matching_filings(page_data, form_type))
+
+        if len(matches) < count:
+            raise NoFilingsFoundError(
+                f"Only found {len(matches)} {form_type!r} filings for {ticker!r}, "
+                f"needed {count}"
+            )
+
+        matches.sort(key=lambda m: m["filingDate"], reverse=True)
+        selected = matches[:count]
+
+        return [
+            FilingMetadata(
+                ticker=ticker,
+                cik=cik,
+                form_type=form_type,
+                filing_date=m["filingDate"],
+                accession_number=m["accessionNumber"],
+                primary_document=m["primaryDocument"],
+                source_url=ARCHIVE_URL_TMPL.format(
+                    cik=cik,
+                    accession_no_dashes=m["accessionNumber"].replace("-", ""),
+                    primary_document=m["primaryDocument"],
+                ),
+            )
+            for m in selected
+        ]
 
     def fetch_filing_document(self, filing: FilingMetadata) -> str:
         raise NotImplementedError
