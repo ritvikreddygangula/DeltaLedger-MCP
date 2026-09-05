@@ -3,7 +3,12 @@ name = "materiality-engine"
 version = "0.1.0"
 description = "Filing materiality & diligence agent: detects and classifies material changes across sequential SEC filings"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "beautifulsoup4>=4.15.0",
+    "lxml>=6.1.3",
+    "python-dotenv>=1.2.3",
+    "requests>=2.34.2",
+]
 
 [dependency-groups]
 dev = [
