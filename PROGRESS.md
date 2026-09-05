@@ -28,11 +28,11 @@ Scope decisions: storage is local SQLite for this Part (Postgres migration + emb
 - [x] HTML section parser with ToC-vs-heading disambiguation (`src/connectors/section_parser.py`)
 - [x] SQLite schema + write path (`src/storage/schema.py`, `src/storage/db.py`)
 - [x] `scripts/ingest_ticker.py` wiring connector → parser → storage
-- [ ] Bookkeeping (this update) + delete superseded placeholder test
-- [ ] Blocked live verification (see below)
+- [x] Bookkeeping + delete superseded placeholder test
+- [x] Live verification: `uv run python -m scripts.ingest_ticker AAPL` against real EDGAR data — both real 10-Ks (accession `0000320193-25-000079` filed 2025-10-31, `0000320193-24-000123` filed 2024-11-01) tagged with all 4 target sections and substantive body text, confirmed via direct SQLite query
 
-**Current sub-step:** bookkeeping, then live verification.
+**Current sub-step:** none — Part 1 complete, ready to merge.
 
-**Open decisions / blockers:** live end-to-end verification (`uv run python scripts/ingest_ticker.py AAPL`) is blocked on a local `.env` with a real `EDGAR_USER_AGENT` — no `.env` exists yet. See `.env.example` for the required format; no signup/key needed, just a real name + email.
+**Open decisions / blockers:** none. Note: must run the script as `python -m scripts.ingest_ticker`, not `python scripts/ingest_ticker.py` directly — the latter doesn't put the repo root on `sys.path` so `import src...` fails.
 
 ## Up next: Part 2 — Structured Storage (Postgres) & Embedding Pipeline (not started)

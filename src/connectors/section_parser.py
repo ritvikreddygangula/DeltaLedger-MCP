@@ -1,7 +1,13 @@
 import re
+import warnings
 from dataclasses import dataclass
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+
+# Real EDGAR 10-Ks are iXBRL: standard HTML with XML namespace tags mixed in.
+# bs4 flags that combination as "looks like XML" even though parsing it as
+# HTML (what we want) is correct and is exactly what browsers do.
+warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
 
 TARGET_ITEMS = ["1A", "3", "7", "8"]
 
