@@ -11,5 +11,8 @@ __pycache__/
 # Secrets
 .env
 
+# Local data (SQLite DB, downloaded filings)
+data/
+
 # OS
 .DS_Store
