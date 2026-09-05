@@ -1,0 +1,67 @@
+<!--
+Synthetic 10-K fixture modeled on real EDGAR filing structure: a table-of-
+contents (table cells split across separate text nodes, same short "Item N."
+strings as the real headings later in the doc) followed by the actual body
+sections. Used to test that the section parser picks the real headings, not
+the ToC entries, and that each target section's body stops at the next Item
+boundary (including non-target items like 7A and 9) rather than bleeding into
+it. One heading below uses "&nbsp;" between "Item" and the number to exercise
+non-breaking-space handling.
+-->
+<html>
+<body>
+<div>TABLE OF CONTENTS</div>
+<table>
+<tr><td>Item 1.</td><td>Business</td><td>3</td></tr>
+<tr><td>Item&nbsp;1A.</td><td>Risk Factors</td><td>5</td></tr>
+<tr><td>Item 1B.</td><td>Unresolved Staff Comments</td><td>20</td></tr>
+<tr><td>Item 3.</td><td>Legal Proceedings</td><td>21</td></tr>
+<tr><td>Item 4.</td><td>Mine Safety Disclosures</td><td>21</td></tr>
+<tr><td>Item 5.</td><td>Market for Registrant's Common Equity</td><td>22</td></tr>
+<tr><td>Item 6.</td><td>[Reserved]</td><td>24</td></tr>
+<tr><td>Item 7.</td><td>Management's Discussion and Analysis</td><td>25</td></tr>
+<tr><td>Item 7A.</td><td>Quantitative and Qualitative Disclosures About Market Risk</td><td>40</td></tr>
+<tr><td>Item 8.</td><td>Financial Statements and Supplementary Data</td><td>41</td></tr>
+<tr><td>Item 9.</td><td>Changes in and Disagreements with Accountants</td><td>90</td></tr>
+</table>
+
+<div>PART I</div>
+
+<div>Item 1. Business</div>
+<p>The Company designs, manufactures, and markets a range of products. This filler paragraph stands in for a real business description and is intentionally short.</p>
+
+<div>Item&nbsp;1A. Risk Factors</div>
+<p>The Company's business is subject to a number of risks, any of which could materially and adversely affect the Company's business, reputation, results of operations, financial condition, and stock price. Global and regional economic conditions could materially adversely affect the Company's business, including consumer demand for the Company's products and services, and the Company's ability to obtain financing for its operations on favorable terms.</p>
+<p>The Company relies on third-party suppliers and manufacturers to produce and supply materials, components, and products for the Company, and disruption of these relationships could materially adversely affect the Company's ability to bring products to market.</p>
+
+<div>Item 1B. Unresolved Staff Comments</div>
+<p>None.</p>
+
+<div>Item 3. Legal Proceedings</div>
+<p>The Company is subject to various legal proceedings and claims that arise in the ordinary course of business, including, among others, intellectual property, antitrust, and other matters. In the opinion of management, there was not at least a reasonable possibility the Company may have incurred a material loss, or a material loss in excess of a recorded accrual, with respect to loss contingencies for asserted legal and other claims, except as disclosed elsewhere in these financial statement notes.</p>
+
+<div>Item 4. Mine Safety Disclosures</div>
+<p>Not applicable.</p>
+
+<div>PART II</div>
+
+<div>Item 5. Market for Registrant's Common Equity, Related Stockholder Matters and Issuer Purchases of Equity Securities</div>
+<p>The Company's common stock is traded on a national securities exchange under a ticker symbol.</p>
+
+<div>Item 6. [Reserved]</div>
+
+<div>Item 7. Management's Discussion and Analysis of Financial Condition and Results of Operations</div>
+<p>The following discussion should be read in conjunction with the consolidated financial statements and accompanying notes included elsewhere in this filing. Total net sales increased year-over-year, driven by growth across the Company's product and services categories, partially offset by unfavorable foreign currency movements relative to the prior year.</p>
+<p>Gross margin percentage increased compared to the prior year, primarily driven by cost savings and a shift in product mix, partially offset by higher product cost variances and other factors. Operating expenses increased primarily driven by higher headcount-related expenses and higher investment in research and development activities.</p>
+
+<div>Item&nbsp;7A. Quantitative and Qualitative Disclosures About Market Risk</div>
+<p>Not applicable.</p>
+
+<div>Item 8. Financial Statements and Supplementary Data</div>
+<p>The Financial Statements required by this Item, together with the Report of Independent Registered Public Accounting Firm thereon, are incorporated herein by reference and set forth beginning on page F-1 of this Annual Report on Form 10-K, and are hereby incorporated into this Item 8 by this reference.</p>
+
+<div>Item 9. Changes in and Disagreements with Accountants on Accounting and Financial Disclosure</div>
+<p>None.</p>
+
+</body>
+</html>
