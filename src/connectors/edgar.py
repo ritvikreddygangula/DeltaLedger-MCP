@@ -131,7 +131,7 @@ class EDGARConnector:
         ]
 
     def fetch_filing_document(self, filing: FilingMetadata) -> str:
-        raise NotImplementedError
+        return self._get(filing.source_url).text
 
     def _get(self, url: str) -> requests.Response:
         self._rate_limiter.wait()

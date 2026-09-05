@@ -1,5 +1,6 @@
 import pytest
 
+from src.connectors.base import FilingMetadata
 from src.connectors.edgar import (
     EDGARConnector,
     NoFilingsFoundError,
@@ -175,3 +176,26 @@ def test_get_recent_filings_raises_when_not_enough_found():
 
     with pytest.raises(NoFilingsFoundError):
         connector.get_recent_filings("AAPL", form_type="10-K", count=2)
+
+
+def test_fetch_filing_document_returns_text_and_sends_user_agent():
+    filing = FilingMetadata(
+        ticker="AAPL",
+        cik=320193,
+        form_type="10-K",
+        filing_date="2025-11-01",
+        accession_number="0000320193-25-000079",
+        primary_document="aapl-20250927.htm",
+        source_url=(
+            "https://www.sec.gov/Archives/edgar/data/320193/"
+            "000032019325000079/aapl-20250927.htm"
+        ),
+    )
+    session = _StubSession({filing.source_url: _StubResponse(text="<html>10-K body</html>")})
+    connector = _connector_with(session)
+
+    html = connector.fetch_filing_document(filing)
+
+    assert html == "<html>10-K body</html>"
+    assert session.calls[0]["url"] == filing.source_url
+    assert session.calls[0]["headers"] == {"User-Agent": "Test test@example.com"}
