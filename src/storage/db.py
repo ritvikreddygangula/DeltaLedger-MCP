@@ -1,34 +1,41 @@
-import sqlite3
+import os
 from datetime import datetime, timezone
-from pathlib import Path
+
+import psycopg
+from psycopg.rows import dict_row
 
 from ..connectors.base import FilingMetadata
 from ..connectors.section_parser import TaggedSection
 from .schema import SCHEMA_DDL
 
-DEFAULT_DB_PATH = Path("data/materiality.db")
+
+def _require_database_url_from_env() -> str:
+    database_url = os.environ.get("DATABASE_URL")
+    if not database_url:
+        raise RuntimeError(
+            "DATABASE_URL is required (format: 'postgresql://user:pass@host:5432/dbname'). "
+            "See .env.example."
+        )
+    return database_url
 
 
-def get_connection(db_path: Path | str = DEFAULT_DB_PATH) -> sqlite3.Connection:
-    path = Path(db_path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(path)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    conn.row_factory = sqlite3.Row
-    return conn
+def get_connection(database_url: str | None = None) -> psycopg.Connection:
+    database_url = database_url or _require_database_url_from_env()
+    return psycopg.connect(database_url, row_factory=dict_row)
 
 
-def init_db(conn: sqlite3.Connection) -> None:
-    conn.executescript(SCHEMA_DDL)
+def init_db(conn: psycopg.Connection) -> None:
+    conn.execute(SCHEMA_DDL)
     conn.commit()
 
 
-def upsert_filing(conn: sqlite3.Connection, filing: FilingMetadata) -> int:
-    conn.execute(
+def upsert_filing(conn: psycopg.Connection, filing: FilingMetadata) -> int:
+    row = conn.execute(
         """INSERT INTO filings
                (cik, ticker, form_type, filing_date, accession_number, source_url, fetched_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
-           ON CONFLICT(accession_number) DO UPDATE SET fetched_at = excluded.fetched_at""",
+           VALUES (%s, %s, %s, %s, %s, %s, %s)
+           ON CONFLICT (accession_number) DO UPDATE SET fetched_at = EXCLUDED.fetched_at
+           RETURNING id""",
         (
             filing.cik,
             filing.ticker,
@@ -36,32 +43,36 @@ def upsert_filing(conn: sqlite3.Connection, filing: FilingMetadata) -> int:
             filing.filing_date,
             filing.accession_number,
             filing.source_url,
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(timezone.utc),
         ),
-    )
-    row = conn.execute(
-        "SELECT id FROM filings WHERE accession_number = ?",
-        (filing.accession_number,),
     ).fetchone()
     conn.commit()
     return row["id"]
 
 
 def insert_sections(
-    conn: sqlite3.Connection, filing_id: int, sections: list[TaggedSection]
+    conn: psycopg.Connection, filing_id: int, sections: list[TaggedSection]
 ) -> None:
-    conn.execute("DELETE FROM sections WHERE filing_id = ?", (filing_id,))
-    conn.executemany(
-        "INSERT INTO sections (filing_id, item_key, heading_text, body_text) VALUES (?, ?, ?, ?)",
-        [
-            (filing_id, s.item_key, s.heading_text, s.body_text)
-            for s in sections
-        ],
-    )
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM sections WHERE filing_id = %s", (filing_id,))
+        cur.executemany(
+            "INSERT INTO sections (filing_id, item_key, heading_text, body_text) VALUES (%s, %s, %s, %s)",
+            [(filing_id, s.item_key, s.heading_text, s.body_text) for s in sections],
+        )
     conn.commit()
 
 
-def get_filing_sections(conn: sqlite3.Connection, filing_id: int) -> list[sqlite3.Row]:
+def get_filing_sections(conn: psycopg.Connection, filing_id: int) -> list[dict]:
     return conn.execute(
-        "SELECT * FROM sections WHERE filing_id = ?", (filing_id,)
+        "SELECT * FROM sections WHERE filing_id = %s", (filing_id,)
+    ).fetchall()
+
+
+def get_filings_for_ticker(
+    conn: psycopg.Connection, ticker: str, form_type: str = "10-K", limit: int = 2
+) -> list[dict]:
+    return conn.execute(
+        """SELECT * FROM filings WHERE ticker = %s AND form_type = %s
+           ORDER BY filing_date DESC LIMIT %s""",
+        (ticker.upper(), form_type, limit),
     ).fetchall()
