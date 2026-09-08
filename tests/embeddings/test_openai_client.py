@@ -1,4 +1,6 @@
-from src.embeddings.openai_client import get_embeddings
+import tiktoken
+
+from src.embeddings.openai_client import MAX_INPUT_TOKENS, get_embeddings
 
 
 class _StubEmbeddingData:
@@ -29,6 +31,25 @@ class _StubEmbeddings:
 class _StubOpenAIClient:
     def __init__(self, vectors_by_input):
         self.embeddings = _StubEmbeddings(vectors_by_input)
+
+
+class _RecordingEmbeddings:
+    """Records whatever input text is actually sent, without needing to know
+    it in advance -- used to test truncation, where the exact truncated
+    string isn't known ahead of time."""
+
+    def __init__(self):
+        self.calls = []
+
+    def create(self, model, input):
+        self.calls.append({"model": model, "input": input})
+        data = [_StubEmbeddingData([0.0], i) for i in range(len(input))]
+        return _StubEmbeddingResponse(data)
+
+
+class _RecordingClient:
+    def __init__(self):
+        self.embeddings = _RecordingEmbeddings()
 
 
 def test_get_embeddings_returns_vectors_in_input_order():
@@ -66,3 +87,23 @@ def test_get_embeddings_reorders_by_response_index():
     vectors = get_embeddings(["a", "b"], client=client)
 
     assert vectors == [[1.0], [2.0]]
+
+
+def test_long_text_is_truncated_to_token_limit():
+    encoding = tiktoken.encoding_for_model("text-embedding-3-small")
+    long_text = "risk factor sentence. " * 5000  # comfortably over 8192 tokens
+    client = _RecordingClient()
+
+    get_embeddings([long_text], client=client)
+
+    sent_text = client.embeddings.calls[0]["input"][0]
+    assert len(encoding.encode(sent_text)) <= MAX_INPUT_TOKENS
+    assert len(sent_text) < len(long_text)
+
+
+def test_short_text_is_not_truncated():
+    client = _RecordingClient()
+
+    get_embeddings(["short text"], client=client)
+
+    assert client.embeddings.calls[0]["input"][0] == "short text"
