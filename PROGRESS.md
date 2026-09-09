@@ -89,4 +89,32 @@ Scope decisions: storage is local SQLite for this Part (Postgres migration + emb
 
 **Open decisions / blockers:** none.
 
-## Up next: Part 4 — Materiality Classifier Agent (not started)
+## Part 4 — Materiality Classifier Agent (branch `part-4-materiality-classifier`)
+
+**What this Part adds:** the first LLM reasoning in the pipeline — everything before this (embeddings, cosine similarity, Hungarian assignment) was pure math. Given the Aligner's `alignments`, the classifier reads the actual section text and decides *what* changed and *how much it matters*, producing structured `Finding`s (category, tier, reasoning, verbatim excerpts) instead of just a similarity score.
+
+**Model choice was verified empirically, not assumed** — training knowledge about OpenAI model names goes stale fast, so before designing anything a few real (tiny-cost, ~$0.001 total) API calls were made against the project's real account: `client.models.list()` to see what's actually available, then live test calls exercising the exact structured-output shape being designed around. Landed on **`gpt-5.4-mini`** ($0.75/1M input, $4.50/1M output tokens) — a full 4-section filing-pair classification run costs roughly $0.10-$0.20, trivial against the project's "tens of dollars total" budget. Also confirmed live: `client.responses.parse(text_format=SomePydanticModel)` is the SDK's current designated structured-output path (not the older `chat.completions.parse`, which still works but is documented as legacy), `reasoning` takes a dict (`{"effort": "low"}`) not a flat string param, and `response.output_parsed` can genuinely be `None` on a refusal — `classify_alignment` guards this by returning `[]` rather than crashing.
+
+**No truncation needed here, unlike Part 2** — worth stating explicitly since it'd be easy to assume the same 8192-token embedding cap applies. `gpt-5.4-mini` has a 272K-input-token context window; the worst case (a "matched" pair sending both full older and newer section text) is ~40K tokens, about 15% of the cap.
+
+**Zero findings is a valid, expected output**, not an error case — a "matched" pair with only trivial rewording should produce nothing, not a forced "no material change" finding. This keeps `classifications` independent in length from `alignments`, consistent with how `align_sections` already produces variable-length output relative to its own input. The prompt explicitly tells the model not to invent a finding just to have something to report.
+
+**Pydantic is only at the API boundary.** `responses.parse` requires a real `pydantic.BaseModel`, but results convert immediately into the plain frozen `Finding` dataclass — the rest of the codebase never imports `pydantic`, matching the existing dataclass convention from `aligner.py`/`section_parser.py`.
+
+**Bug caught before it shipped:** wiring the `classify` node into `build_graph`'s default parameters would have made the three pre-existing graph tests from Part 3 silently start making real OpenAI calls, since they didn't override `classify_fn`. Caught and fixed (all graph tests now explicitly inject a fake `classify_fn`) before ever running the full suite with the new wiring in place — worth remembering as a general hazard: extending a function's default behavior can make old tests that relied on the old default start doing something new without any code change to the tests themselves.
+
+- [x] Dependencies (`pydantic` promoted from transitive to explicit)
+- [x] `Finding` model + `classify_alignment` (`src/agents/classifier.py`)
+- [x] Classifier tests with a stubbed OpenAI client (`tests/agents/test_classifier.py`)
+- [x] `PipelineState.classifications` typed as `list[Finding]` (was `list[dict]`, an inconsistency left over from Part 3)
+- [x] `classify` node wired into the graph (`align -> classify -> END`)
+- [x] Graph tests extended for the new node; fixed the silent-real-API-call bug above
+- [x] `scripts/classify_filing.py`; deleted superseded `scripts/align_filing.py`; updated README
+- [ ] Bookkeeping (this update)
+- [ ] Live verification (see below)
+
+**Current sub-step:** bookkeeping, then live verification.
+
+**Open decisions / blockers:** live verification (`uv run python -m scripts.classify_filing AAPL` against real Postgres + OpenAI) not yet run — this is the first script in the project that makes real, billed chat completion calls (expect a few cents), not just cheap embedding calls.
+
+## Up next: Part 5 — Verifier/Critic Agent (not started)
