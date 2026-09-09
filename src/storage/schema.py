@@ -21,4 +21,28 @@ CREATE TABLE IF NOT EXISTS sections (
 
 CREATE INDEX IF NOT EXISTS idx_sections_filing_id ON sections(filing_id);
 CREATE INDEX IF NOT EXISTS idx_filings_ticker ON filings(ticker);
+
+CREATE TABLE IF NOT EXISTS findings (
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    older_filing_id INTEGER NOT NULL REFERENCES filings(id) ON DELETE CASCADE,
+    newer_filing_id INTEGER NOT NULL REFERENCES filings(id) ON DELETE CASCADE,
+    item_key TEXT NOT NULL,
+    category TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    reasoning TEXT NOT NULL,
+    older_excerpt TEXT,
+    newer_excerpt TEXT,
+    excerpt_verified BOOLEAN NOT NULL,
+    confidence DOUBLE PRECISION NOT NULL,
+    verifier_reasoning TEXT NOT NULL,
+    final_tier TEXT NOT NULL,
+    classifier_model TEXT NOT NULL,
+    classifier_prompt_version TEXT NOT NULL,
+    verifier_model TEXT NOT NULL,
+    verifier_prompt_version TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_findings_older_filing_id ON findings(older_filing_id);
+CREATE INDEX IF NOT EXISTS idx_findings_newer_filing_id ON findings(newer_filing_id);
 """
