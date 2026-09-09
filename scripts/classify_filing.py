@@ -1,10 +1,11 @@
 """Manual end-to-end verification -- NOT run in CI (needs a real DATABASE_URL
 pointing at Postgres with data already ingested via scripts/ingest_ticker.py,
-and a real OPENAI_API_KEY). Runs the Part 3 LangGraph pipeline (currently
-just the "align" node) and prints matched pairs plus any new/removed
-sections as distinct findings.
+and a real OPENAI_API_KEY -- this one makes real, billed OpenAI chat calls,
+unlike the embedding-only scripts before it). Runs the full align+classify
+LangGraph pipeline and prints matched/removed/new sections plus every
+material finding the classifier identified.
 
-Usage: uv run python -m scripts.align_filing AAPL
+Usage: uv run python -m scripts.classify_filing AAPL
 """
 
 import sys
@@ -57,6 +58,16 @@ def main(ticker: str) -> None:
                 f"  NEW      Item {alignment.newer_section['item_key']} "
                 f"({alignment.newer_section['heading_text']!r}) -- not present in older filing"
             )
+
+    findings = result["classifications"]
+    print(f"\n{len(findings)} material finding(s):")
+    for finding in findings:
+        print(f"\n  [{finding.tier.upper()}] Item {finding.item_key} -- {finding.category}")
+        print(f"    {finding.reasoning}")
+        if finding.older_excerpt:
+            print(f'    OLDER: "{finding.older_excerpt}"')
+        if finding.newer_excerpt:
+            print(f'    NEWER: "{finding.newer_excerpt}"')
 
 
 if __name__ == "__main__":
