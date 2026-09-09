@@ -67,4 +67,26 @@ Scope decisions: storage is local SQLite for this Part (Postgres migration + emb
 
 **Open decisions / blockers:** none.
 
-## Up next: Part 3 — Aligner Agent (not started)
+## Part 3 — Aligner Agent (branch `part-3-aligner-agent`)
+
+**What this Part actually adds over Part 2:** Part 2's `compare_sections.py` did an ad-hoc comparison — each older-filing section independently picked whichever newer-filing section scored highest against it. That's not a real alignment: nothing stopped two older sections from both claiming the same best-scoring newer section, and nothing ever said "this section is genuinely new" or "this one disappeared." Part 3 replaces that with a proper one-to-one assignment (`scipy.optimize.linear_sum_assignment`, the Hungarian algorithm) that finds the single pairing maximizing total similarity across *all* sections at once, then gates each pairing through a similarity threshold so a forced-but-bad pairing becomes explicit "removed" + "new" findings instead of a false match. `tests/agents/test_aligner.py` has a concrete constructed case proving this matters: two older sections both score highest against the same newer section (1.0 and 0.8), so naive argmax would double-claim it — the optimal assignment instead separates them (1.0 and 0.6) since that's the pairing that maximizes total similarity.
+
+**LangGraph decision:** set up now, not deferred to Part 4, even though there's only one real node (`align`) — `src/agents/state.py` defines one flat `PipelineState` schema (not per-Part subclasses) with `NotRequired` placeholder fields for Part 4's `classifications` and Part 5's `verified_findings`, so those Parts add a node + a field without ever touching this Part's code. Verified LangGraph's actual current API (1.2.11) before building against it rather than assuming: `TypedDict` state, `START`/`END` sentinel edges (not the older `set_entry_point`), node functions returning partial-state-update dicts.
+
+**Threshold is a judgment call, not a calibrated value:** `DEFAULT_MATCH_THRESHOLD = 0.75` in `src/agents/aligner.py`. Part 2's live run showed genuine same-company year-over-year matches scoring 0.96-0.99 — that's the only real data point available. 0.75 leaves headroom below that for legitimately-matched-but-reworded sections while still rejecting a forced pairing between unrelated ones, but SEC filings share a lot of generic boilerplate/legal language that could score misleadingly high on cosine similarity — this needs revisiting once Part 6's eval harness has real cross-company or renamed-section data to tune against. Kept as a function parameter specifically so that recalibration is a one-line change, not a rewrite.
+
+- [x] Dependencies (`langgraph`, `scipy`)
+- [x] `align_sections` core function + `SectionAlignment` (`src/agents/aligner.py`)
+- [x] Aligner tests including the Hungarian-vs-argmax proof (`tests/agents/test_aligner.py`)
+- [x] Shared `PipelineState` schema (`src/agents/state.py`)
+- [x] LangGraph wiring with injectable embedding function (`src/agents/graph.py`)
+- [x] Graph tests with a fake embed function, no real API calls (`tests/agents/test_graph.py`)
+- [x] `scripts/align_filing.py`; deleted superseded `scripts/compare_sections.py`; updated README
+- [x] Bookkeeping
+- [x] Live verification: `uv run python -m scripts.align_filing AAPL` against real Postgres + OpenAI — all 4 sections came back MATCHED (Item 1A: 0.9651, Item 3: 0.9872, Item 7: 0.9842, Item 8: 0.9725), zero spurious NEW/REMOVED noise. Scores are identical to Part 2's naive `compare_sections.py` output, which is expected and not a red flag: AAPL's filings are the "easy case" (4 sections per side, cleanly one-to-one, no ambiguity), so the naive and optimal-assignment approaches necessarily agree here. The Hungarian algorithm's actual value only shows up when sections compete for the same match or structure changes across filings — that behavior is proven by `test_optimal_assignment_beats_naive_per_row_argmax` instead, since no real filing pair with that kind of ambiguity exists in this project's test data yet.
+
+**Current sub-step:** none — Part 3 complete, ready to merge.
+
+**Open decisions / blockers:** none.
+
+## Up next: Part 4 — Materiality Classifier Agent (not started)
