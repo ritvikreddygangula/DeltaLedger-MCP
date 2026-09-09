@@ -30,10 +30,10 @@ uv run python -m scripts.ingest_ticker AAPL
 
 Pulls the two most recent 10-Ks for the given ticker from SEC EDGAR, tags each one's Item 1A (Risk Factors), Item 3 (Legal Proceedings), Item 7 (MD&A), and Item 8 (Financial Statements) sections, and stores everything in Postgres. Requires `EDGAR_USER_AGENT` and `DATABASE_URL` to be set in `.env`.
 
-## Comparing sections across two filings
+## Aligning sections across two filings
 
 ```bash
-uv run python -m scripts.compare_sections AAPL
+uv run python -m scripts.align_filing AAPL
 ```
 
-For a ticker already ingested via the command above, embeds every section of both filings (OpenAI `text-embedding-3-small`) and prints each older-filing section's best-matching section in the newer filing by cosine similarity. Requires `DATABASE_URL` and `OPENAI_API_KEY`.
+For a ticker already ingested via the command above, runs the Aligner agent (embeddings + optimal one-to-one assignment, not just each section's best guess) and prints every section as MATCHED (with a similarity score), REMOVED (present in the older filing only), or NEW (present in the newer filing only). Requires `DATABASE_URL` and `OPENAI_API_KEY`.
