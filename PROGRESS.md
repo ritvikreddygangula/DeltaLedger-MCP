@@ -110,11 +110,13 @@ Scope decisions: storage is local SQLite for this Part (Postgres migration + emb
 - [x] `classify` node wired into the graph (`align -> classify -> END`)
 - [x] Graph tests extended for the new node; fixed the silent-real-API-call bug above
 - [x] `scripts/classify_filing.py`; deleted superseded `scripts/align_filing.py`; updated README
-- [ ] Bookkeeping (this update)
-- [ ] Live verification (see below)
+- [x] Bookkeeping
+- [x] Live verification: `uv run python -m scripts.classify_filing AAPL` against real Postgres + OpenAI — all 4 sections MATCHED (same scores as Part 3), and the classifier produced **18 material findings**, correctly tiered and citing real, specific events: the EU's €500M DMA fine and cease-and-desist order (Item 3, HIGH), the California District Court finding Apple in violation of the Epic injunction and referring it for possible criminal contempt (Item 3, HIGH), new tariff/Section 232 risk language (Item 1A and Item 7, HIGH), the Google antitrust remedies threatening search-revenue licensing (Item 1A, HIGH), the State Aid Decision's resolution and tax impact (Item 8, HIGH), two new FASB accounting standard adoptions (Item 7/8, MEDIUM), and several lower-tier balance-sheet/disclosure changes (debt issuance, lease liabilities, receivables concentration). Every excerpt read as genuine verbatim filing language, not paraphrase, exactly as the prompt instructed. This is a strong, encouraging result for the project's core "verification/eval layer" pitch — full output saved for reference if needed later.
 
-**Current sub-step:** bookkeeping, then live verification.
+**Connectivity note (not a code issue):** hit the same RDS timeout symptom as Part 2's original setup saga, twice, both times traced to the security group's IP-based rule going stale (the user's public IP changed) rather than anything wrong with the code or schema. Also: earlier in this project a sandboxed environment was concluded to categorically block outbound port 5432 (based on a test against an unrelated host) — that conclusion turned out not to hold on a later attempt from the same environment, so that claim should be treated as circumstantial, not a reliable fact about the environment going forward.
 
-**Open decisions / blockers:** live verification (`uv run python -m scripts.classify_filing AAPL` against real Postgres + OpenAI) not yet run — this is the first script in the project that makes real, billed chat completion calls (expect a few cents), not just cheap embedding calls.
+**Current sub-step:** none — Part 4 complete, ready to merge.
+
+**Open decisions / blockers:** none.
 
 ## Up next: Part 5 — Verifier/Critic Agent (not started)
