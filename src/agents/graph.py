@@ -6,9 +6,11 @@ from ..embeddings.openai_client import get_embeddings
 from .aligner import DEFAULT_MATCH_THRESHOLD, SectionAlignment, align_sections
 from .classifier import Finding, classify_alignment
 from .state import PipelineState
+from .verifier import VerifiedFinding, verify_finding
 
 EmbedFn = Callable[[list[str]], list[list[float]]]
 ClassifyFn = Callable[[SectionAlignment], list[Finding]]
+VerifyFn = Callable[[Finding, SectionAlignment], VerifiedFinding]
 
 
 def _make_align_node(embed_fn: EmbedFn, threshold: float):
@@ -32,22 +34,39 @@ def _make_align_node(embed_fn: EmbedFn, threshold: float):
 def _make_classify_node(classify_fn: ClassifyFn):
     def classify_node(state: PipelineState) -> dict:
         classifications: list[Finding] = []
+        classified_pairs: list[tuple[SectionAlignment, Finding]] = []
         for alignment in state["alignments"]:
-            classifications.extend(classify_fn(alignment))
-        return {"classifications": classifications}
+            findings = classify_fn(alignment)
+            classifications.extend(findings)
+            classified_pairs.extend((alignment, finding) for finding in findings)
+        return {"classifications": classifications, "classified_pairs": classified_pairs}
 
     return classify_node
+
+
+def _make_verify_node(verify_fn: VerifyFn):
+    def verify_node(state: PipelineState) -> dict:
+        verified_findings = [
+            verify_fn(finding, alignment)
+            for alignment, finding in state["classified_pairs"]
+        ]
+        return {"verified_findings": verified_findings}
+
+    return verify_node
 
 
 def build_graph(
     embed_fn: EmbedFn = get_embeddings,
     classify_fn: ClassifyFn = classify_alignment,
+    verify_fn: VerifyFn = verify_finding,
     threshold: float = DEFAULT_MATCH_THRESHOLD,
 ):
     builder = StateGraph(PipelineState)
     builder.add_node("align", _make_align_node(embed_fn, threshold))
     builder.add_node("classify", _make_classify_node(classify_fn))
+    builder.add_node("verify", _make_verify_node(verify_fn))
     builder.add_edge(START, "align")
     builder.add_edge("align", "classify")
-    builder.add_edge("classify", END)
+    builder.add_edge("classify", "verify")
+    builder.add_edge("verify", END)
     return builder.compile()
