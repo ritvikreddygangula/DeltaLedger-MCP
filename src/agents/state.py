@@ -1,6 +1,7 @@
 from typing import NotRequired, TypedDict
 
 from .aligner import SectionAlignment
+from .classifier import Finding
 
 
 class PipelineState(TypedDict):
@@ -16,8 +17,8 @@ class PipelineState(TypedDict):
     newer_sections: list[dict]
     alignments: list[SectionAlignment]
 
-    # --- Part 4 (Materiality Classifier) -- not yet populated ---
-    classifications: NotRequired[list[dict]]
+    # --- Part 4 (Materiality Classifier) ---
+    classifications: NotRequired[list[Finding]]
 
     # --- Part 5 (Verifier) -- not yet populated ---
     verified_findings: NotRequired[list[dict]]

@@ -89,4 +89,34 @@ Scope decisions: storage is local SQLite for this Part (Postgres migration + emb
 
 **Open decisions / blockers:** none.
 
-## Up next: Part 4 — Materiality Classifier Agent (not started)
+## Part 4 — Materiality Classifier Agent (branch `part-4-materiality-classifier`)
+
+**What this Part adds:** the first LLM reasoning in the pipeline — everything before this (embeddings, cosine similarity, Hungarian assignment) was pure math. Given the Aligner's `alignments`, the classifier reads the actual section text and decides *what* changed and *how much it matters*, producing structured `Finding`s (category, tier, reasoning, verbatim excerpts) instead of just a similarity score.
+
+**Model choice was verified empirically, not assumed** — training knowledge about OpenAI model names goes stale fast, so before designing anything a few real (tiny-cost, ~$0.001 total) API calls were made against the project's real account: `client.models.list()` to see what's actually available, then live test calls exercising the exact structured-output shape being designed around. Landed on **`gpt-5.4-mini`** ($0.75/1M input, $4.50/1M output tokens) — a full 4-section filing-pair classification run costs roughly $0.10-$0.20, trivial against the project's "tens of dollars total" budget. Also confirmed live: `client.responses.parse(text_format=SomePydanticModel)` is the SDK's current designated structured-output path (not the older `chat.completions.parse`, which still works but is documented as legacy), `reasoning` takes a dict (`{"effort": "low"}`) not a flat string param, and `response.output_parsed` can genuinely be `None` on a refusal — `classify_alignment` guards this by returning `[]` rather than crashing.
+
+**No truncation needed here, unlike Part 2** — worth stating explicitly since it'd be easy to assume the same 8192-token embedding cap applies. `gpt-5.4-mini` has a 272K-input-token context window; the worst case (a "matched" pair sending both full older and newer section text) is ~40K tokens, about 15% of the cap.
+
+**Zero findings is a valid, expected output**, not an error case — a "matched" pair with only trivial rewording should produce nothing, not a forced "no material change" finding. This keeps `classifications` independent in length from `alignments`, consistent with how `align_sections` already produces variable-length output relative to its own input. The prompt explicitly tells the model not to invent a finding just to have something to report.
+
+**Pydantic is only at the API boundary.** `responses.parse` requires a real `pydantic.BaseModel`, but results convert immediately into the plain frozen `Finding` dataclass — the rest of the codebase never imports `pydantic`, matching the existing dataclass convention from `aligner.py`/`section_parser.py`.
+
+**Bug caught before it shipped:** wiring the `classify` node into `build_graph`'s default parameters would have made the three pre-existing graph tests from Part 3 silently start making real OpenAI calls, since they didn't override `classify_fn`. Caught and fixed (all graph tests now explicitly inject a fake `classify_fn`) before ever running the full suite with the new wiring in place — worth remembering as a general hazard: extending a function's default behavior can make old tests that relied on the old default start doing something new without any code change to the tests themselves.
+
+- [x] Dependencies (`pydantic` promoted from transitive to explicit)
+- [x] `Finding` model + `classify_alignment` (`src/agents/classifier.py`)
+- [x] Classifier tests with a stubbed OpenAI client (`tests/agents/test_classifier.py`)
+- [x] `PipelineState.classifications` typed as `list[Finding]` (was `list[dict]`, an inconsistency left over from Part 3)
+- [x] `classify` node wired into the graph (`align -> classify -> END`)
+- [x] Graph tests extended for the new node; fixed the silent-real-API-call bug above
+- [x] `scripts/classify_filing.py`; deleted superseded `scripts/align_filing.py`; updated README
+- [x] Bookkeeping
+- [x] Live verification: `uv run python -m scripts.classify_filing AAPL` against real Postgres + OpenAI — all 4 sections MATCHED (same scores as Part 3), and the classifier produced **18 material findings**, correctly tiered and citing real, specific events: the EU's €500M DMA fine and cease-and-desist order (Item 3, HIGH), the California District Court finding Apple in violation of the Epic injunction and referring it for possible criminal contempt (Item 3, HIGH), new tariff/Section 232 risk language (Item 1A and Item 7, HIGH), the Google antitrust remedies threatening search-revenue licensing (Item 1A, HIGH), the State Aid Decision's resolution and tax impact (Item 8, HIGH), two new FASB accounting standard adoptions (Item 7/8, MEDIUM), and several lower-tier balance-sheet/disclosure changes (debt issuance, lease liabilities, receivables concentration). Every excerpt read as genuine verbatim filing language, not paraphrase, exactly as the prompt instructed. This is a strong, encouraging result for the project's core "verification/eval layer" pitch — full output saved for reference if needed later.
+
+**Connectivity note (not a code issue):** hit the same RDS timeout symptom as Part 2's original setup saga, twice, both times traced to the security group's IP-based rule going stale (the user's public IP changed) rather than anything wrong with the code or schema. Also: earlier in this project a sandboxed environment was concluded to categorically block outbound port 5432 (based on a test against an unrelated host) — that conclusion turned out not to hold on a later attempt from the same environment, so that claim should be treated as circumstantial, not a reliable fact about the environment going forward.
+
+**Current sub-step:** none — Part 4 complete, ready to merge.
+
+**Open decisions / blockers:** none.
+
+## Up next: Part 5 — Verifier/Critic Agent (not started)
