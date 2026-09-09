@@ -82,11 +82,11 @@ Scope decisions: storage is local SQLite for this Part (Postgres migration + emb
 - [x] LangGraph wiring with injectable embedding function (`src/agents/graph.py`)
 - [x] Graph tests with a fake embed function, no real API calls (`tests/agents/test_graph.py`)
 - [x] `scripts/align_filing.py`; deleted superseded `scripts/compare_sections.py`; updated README
-- [ ] Bookkeeping (this update)
-- [ ] Live verification (see below)
+- [x] Bookkeeping
+- [x] Live verification: `uv run python -m scripts.align_filing AAPL` against real Postgres + OpenAI — all 4 sections came back MATCHED (Item 1A: 0.9651, Item 3: 0.9872, Item 7: 0.9842, Item 8: 0.9725), zero spurious NEW/REMOVED noise. Scores are identical to Part 2's naive `compare_sections.py` output, which is expected and not a red flag: AAPL's filings are the "easy case" (4 sections per side, cleanly one-to-one, no ambiguity), so the naive and optimal-assignment approaches necessarily agree here. The Hungarian algorithm's actual value only shows up when sections compete for the same match or structure changes across filings — that behavior is proven by `test_optimal_assignment_beats_naive_per_row_argmax` instead, since no real filing pair with that kind of ambiguity exists in this project's test data yet.
 
-**Current sub-step:** bookkeeping, then live verification.
+**Current sub-step:** none — Part 3 complete, ready to merge.
 
-**Open decisions / blockers:** live verification (`uv run python -m scripts.align_filing AAPL` against real Postgres + OpenAI) not yet run — expect AAPL's structurally-stable filings to show all 4 sections as MATCHED with scores in the same 0.96-0.99 ballpark Part 2 observed, and zero spurious NEW/REMOVED noise; any deviation from that is worth investigating before calling this Part done.
+**Open decisions / blockers:** none.
 
 ## Up next: Part 4 — Materiality Classifier Agent (not started)
