@@ -143,11 +143,12 @@ Scope decisions: storage is local SQLite for this Part (Postgres migration + emb
 - [x] State + graph wiring: `classified_pairs`, `verified_findings` typed correctly, `align -> classify -> verify -> END`
 - [x] Graph tests extended; every pre-existing `build_graph()` call audited for the silent-real-API-call hazard
 - [x] `scripts/run_pipeline.py`; deleted superseded `scripts/classify_filing.py`; updated README
-- [ ] Bookkeeping (this update)
-- [ ] Live verification (see below)
+- [x] Bookkeeping
+- [x] Live verification: `uv run python -m scripts.run_pipeline AAPL` against real Postgres + OpenAI — all 4 sections MATCHED (same scores as Parts 3-4), 16-19 findings per run persisted to the `findings` table (count varies slightly run-to-run since the LLM's exact output isn't deterministic). The two-layer design caught real problems, not just theoretical ones: multiple runs each had 1-2 findings correctly hard-failed at `confidence=0.00, excerpt_verified=False` for citing text that wasn't actually verbatim in the source, and several legitimate tier downgrades with well-reasoned justification (e.g. a claimed "$4.5B debt increase" downgraded after the verifier noticed total term debt principal actually *fell* from $97.3B to $91.3B; the EU DMA fine downgraded HIGH->MEDIUM because "this is regulatory enforcement, not classic litigation"). First `init_db` bug found live: `run_pipeline.py` never called `init_db(conn)`, so the new `findings` table didn't exist on the first live attempt (`psycopg.errors.UndefinedTable`) — `ingest_ticker.py` calls it, this script didn't; fixed by adding the same call (idempotent, `CREATE TABLE IF NOT EXISTS`).
+- [x] Performance: classify/verify nodes parallelized with a `ThreadPoolExecutor` (`MAX_WORKERS=8` in `src/agents/graph.py`) after live runs were taking ~80-90s sequentially for ~20 independent LLM calls. Verified with `superpowers:systematic-debugging` rather than assumed: an isolated diagnostic (identical real API calls) showed 9.21s sequential vs. 3.42s concurrent for 4 calls, and a real full-pipeline run afterward measured 36.66s (down from ~80-90s) — roughly a 2.2-2.5x real speedup, not just a theoretical one. Matters most for Part 6, which will run this same pipeline repeatedly against a golden set.
 
-**Current sub-step:** bookkeeping, then live verification.
+**Current sub-step:** none — Part 5 complete, merged to `main`.
 
-**Open decisions / blockers:** live verification (`uv run python -m scripts.run_pipeline AAPL` against real Postgres + OpenAI) not yet run — first script that both classifies AND verifies (double the chat-completion cost of Part 4's script, still trivial) and persists to Postgres, so also the first opportunity to see Layer 1's whitespace-normalization hold up (or not) against real filing text at scale.
+**Open decisions / blockers:** none.
 
 ## Up next: Part 6 — Eval Harness (not started)
