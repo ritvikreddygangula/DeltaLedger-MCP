@@ -19,6 +19,7 @@ from src.storage.db import (
     get_connection,
     get_filing_sections,
     get_filings_for_ticker,
+    init_db,
     insert_findings,
 )
 
@@ -26,6 +27,7 @@ from src.storage.db import (
 def main(ticker: str) -> None:
     load_dotenv()
     conn = get_connection()
+    init_db(conn)  # idempotent (CREATE TABLE IF NOT EXISTS) -- ensures `findings` exists
     filings = get_filings_for_ticker(conn, ticker, form_type="10-K", limit=2)
     if len(filings) < 2:
         conn.close()

@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
 from langgraph.graph import END, START, StateGraph
@@ -11,6 +12,11 @@ from .verifier import VerifiedFinding, verify_finding
 EmbedFn = Callable[[list[str]], list[list[float]]]
 ClassifyFn = Callable[[SectionAlignment], list[Finding]]
 VerifyFn = Callable[[Finding, SectionAlignment], VerifiedFinding]
+
+# classify_fn/verify_fn calls are independent per item (no shared state, each
+# creates its own OpenAI client internally) -- run them concurrently rather
+# than waiting for each network round trip before starting the next one.
+MAX_WORKERS = 8
 
 
 def _make_align_node(embed_fn: EmbedFn, threshold: float):
@@ -33,10 +39,19 @@ def _make_align_node(embed_fn: EmbedFn, threshold: float):
 
 def _make_classify_node(classify_fn: ClassifyFn):
     def classify_node(state: PipelineState) -> dict:
+        alignments = state["alignments"]
+        if not alignments:
+            return {"classifications": [], "classified_pairs": []}
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            # executor.map preserves input order in its output, regardless
+            # of which call finishes first -- results[i] always corresponds
+            # to alignments[i].
+            results = list(executor.map(classify_fn, alignments))
+
         classifications: list[Finding] = []
         classified_pairs: list[tuple[SectionAlignment, Finding]] = []
-        for alignment in state["alignments"]:
-            findings = classify_fn(alignment)
+        for alignment, findings in zip(alignments, results):
             classifications.extend(findings)
             classified_pairs.extend((alignment, finding) for finding in findings)
         return {"classifications": classifications, "classified_pairs": classified_pairs}
@@ -46,10 +61,16 @@ def _make_classify_node(classify_fn: ClassifyFn):
 
 def _make_verify_node(verify_fn: VerifyFn):
     def verify_node(state: PipelineState) -> dict:
-        verified_findings = [
-            verify_fn(finding, alignment)
-            for alignment, finding in state["classified_pairs"]
-        ]
+        classified_pairs = state["classified_pairs"]
+        if not classified_pairs:
+            return {"verified_findings": []}
+
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            verified_findings = list(
+                executor.map(
+                    lambda pair: verify_fn(pair[1], pair[0]), classified_pairs
+                )
+            )
         return {"verified_findings": verified_findings}
 
     return verify_node
