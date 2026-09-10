@@ -55,9 +55,9 @@
   "ground_truth": [
     {
       "item_key": "1A",
-      "expect_finding": false,
-      "category": null,
-      "note": "Tariff risk factor already present at similar volume in both years (10 mentions each) -- no genuinely new topic found."
+      "expect_finding": true,
+      "category": "substantive_change",
+      "note": "CORRECTED after eval investigation: original keyword-based scan (tariff count only) missed a real, high-confidence finding -- the newer filing discloses an actual S&P credit rating downgrade in July 2025, a material, well-supported event."
     },
     {
       "item_key": "3",
@@ -73,9 +73,9 @@
     },
     {
       "item_key": "8",
-      "expect_finding": false,
-      "category": null,
-      "note": "Restructuring charges continue at similar levels to the prior year (severance mentions decreased); the only new name found (Elliott Hill) is a signature-line certification, not a substantive disclosure."
+      "expect_finding": true,
+      "category": "substantive_change",
+      "note": "CORRECTED after eval investigation: original scan (restructuring/severance keywords only) missed a real finding -- unrecognized tax benefits increased from $990M to $1,026M and the 12-month reasonably-possible-decrease widened from $35M to $249M, a genuine tax contingency development."
     }
   ]
 }
