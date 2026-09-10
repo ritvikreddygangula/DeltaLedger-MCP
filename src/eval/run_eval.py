@@ -7,6 +7,7 @@ CI-marked test with a threshold-based pass/fail.
 Usage: uv run python -m src.eval.run_eval
 """
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -17,6 +18,14 @@ from .scoring import EvalReport, SectionScore, aggregate_scores, score_case
 
 GOLDEN_SET_DIR = Path(__file__).resolve().parent.parent.parent / "tests/fixtures/eval_golden_set"
 REPORT_PATH = Path(__file__).resolve().parent.parent.parent / "EVAL_REPORT.md"
+
+# Each case already runs its own alignments/findings concurrently (up to
+# graph.MAX_WORKERS each). Running a few cases concurrently too -- rather
+# than one full company at a time -- is what actually cuts wall-clock time
+# for the whole golden set, not just within one company. Kept modest (not
+# one worker per case) since each case can itself burst up to 8 requests;
+# retry logic in _llm_utils.py absorbs the added rate-limit risk.
+CASE_MAX_WORKERS = 3
 
 KNOWN_LIMITATIONS = """## Known limitations
 
@@ -63,7 +72,12 @@ def run_eval(
 ) -> tuple[EvalReport, list[tuple[GoldenSetCase, list[SectionScore]]]]:
     load_dotenv()  # pytest doesn't load .env automatically the way our scripts do
     cases = load_golden_set(golden_set_dir)
-    case_scores = [(case, run_case(case)) for case in cases]
+    with ThreadPoolExecutor(max_workers=CASE_MAX_WORKERS) as executor:
+        # executor.map preserves input order in its output regardless of
+        # which case finishes first, so zip(cases, ...) still pairs each
+        # case with its own scores correctly.
+        score_lists = list(executor.map(run_case, cases))
+    case_scores = list(zip(cases, score_lists))
     all_scores = [score for _, scores in case_scores for score in scores]
     report = aggregate_scores(all_scores)
     return report, case_scores
