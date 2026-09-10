@@ -4,6 +4,7 @@ from typing import Literal
 from openai import OpenAI
 from pydantic import BaseModel
 
+from ._llm_utils import call_responses_parse
 from .aligner import SectionAlignment
 
 FindingCategory = Literal[
@@ -109,17 +110,26 @@ def classify_alignment(
     client = client or OpenAI()
     item_key = (alignment.older_section or alignment.newer_section)["item_key"]
 
-    response = client.responses.parse(
-        model=model,
-        input=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": _build_user_prompt(alignment)},
-        ],
-        text_format=_ClassificationSchema,
-        reasoning={"effort": reasoning_effort},
-    )
+    try:
+        response = call_responses_parse(
+            client,
+            model=model,
+            input=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": _build_user_prompt(alignment)},
+            ],
+            text_format=_ClassificationSchema,
+            reasoning={"effort": reasoning_effort},
+        )
+        parsed = response.output_parsed
+    except Exception:
+        # The SDK can raise a validation error (not just return output_parsed
+        # = None) when the model's output is truncated mid-JSON -- a real,
+        # if infrequent, LLM API characteristic no prompt fully prevents.
+        # Degrade to zero findings for this alignment rather than crashing
+        # the whole pipeline run.
+        parsed = None
 
-    parsed = response.output_parsed
     if parsed is None:
         return []
     return [
