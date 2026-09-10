@@ -49,6 +49,16 @@ class _StubOpenAIClientNoOutput:
         self.responses = _StubResponsesNoOutput()
 
 
+class _StubResponsesRaises:
+    def parse(self, **kwargs):
+        raise ValueError("Invalid JSON: EOF while parsing a string")
+
+
+class _StubOpenAIClientRaises:
+    def __init__(self):
+        self.responses = _StubResponsesRaises()
+
+
 def test_matched_alignment_returns_one_finding():
     alignment = SectionAlignment(
         status="matched",
@@ -157,6 +167,24 @@ def test_none_output_parsed_degrades_to_empty_list():
         similarity=0.9,
     )
     client = _StubOpenAIClientNoOutput()
+
+    findings = classify_alignment(alignment, client=client)
+
+    assert findings == []
+
+
+def test_parse_exception_degrades_to_empty_list_instead_of_crashing():
+    # Live-discovered bug (Part 6 eval run against LYV): the SDK can raise a
+    # validation error, not just return output_parsed=None, when the model's
+    # JSON output is truncated mid-string. Must degrade gracefully like the
+    # None case, not propagate and crash the whole pipeline run.
+    alignment = SectionAlignment(
+        status="matched",
+        older_section=_section("1A"),
+        newer_section=_section("1A"),
+        similarity=0.9,
+    )
+    client = _StubOpenAIClientRaises()
 
     findings = classify_alignment(alignment, client=client)
 
