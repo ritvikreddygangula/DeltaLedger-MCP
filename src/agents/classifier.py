@@ -4,6 +4,7 @@ from typing import Literal
 from openai import OpenAI
 from pydantic import BaseModel
 
+from ._llm_utils import call_responses_parse
 from .aligner import SectionAlignment
 
 FindingCategory = Literal[
@@ -110,7 +111,8 @@ def classify_alignment(
     item_key = (alignment.older_section or alignment.newer_section)["item_key"]
 
     try:
-        response = client.responses.parse(
+        response = call_responses_parse(
+            client,
             model=model,
             input=[
                 {"role": "system", "content": SYSTEM_PROMPT},

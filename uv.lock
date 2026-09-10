@@ -642,6 +642,7 @@ dependencies = [
     { name = "requests" },
     { name = "scikit-learn" },
     { name = "scipy" },
+    { name = "tenacity" },
     { name = "tiktoken" },
 ]
 
@@ -664,6 +665,7 @@ requires-dist = [
     { name = "requests", specifier = ">=2.34.2" },
     { name = "scikit-learn", specifier = ">=1.9.0" },
     { name = "scipy", specifier = ">=1.18.1" },
+    { name = "tenacity", specifier = ">=9.1.4" },
     { name = "tiktoken", specifier = ">=0.14.0" },
 ]
 

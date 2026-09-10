@@ -7,7 +7,7 @@ from src.agents.verifier import (
     DEFAULT_REASONING_EFFORT,
     PROMPT_VERSION,
     excerpts_verified,
-    verify_finding,
+    verify_findings_for_alignment,
 )
 
 
@@ -28,19 +28,28 @@ def _finding(**overrides) -> Finding:
     return Finding(**data)
 
 
+def _matched_alignment(older_text="prefix old sentence suffix", newer_text="prefix new sentence suffix"):
+    return SectionAlignment(
+        status="matched",
+        older_section=_section("1A", older_text),
+        newer_section=_section("1A", newer_text),
+        similarity=0.9,
+    )
+
+
 class _StubResponses:
-    def __init__(self, verification_data):
-        self._verification_data = verification_data
+    def __init__(self, verifications_data):
+        self._verifications_data = verifications_data
         self.calls = []
 
     def parse(self, *, model, input, text_format, reasoning=None):
         self.calls.append({"model": model, "input": input, "reasoning": reasoning})
-        return SimpleNamespace(output_parsed=text_format(**self._verification_data))
+        return SimpleNamespace(output_parsed=text_format(verifications=self._verifications_data))
 
 
 class _StubOpenAIClient:
-    def __init__(self, verification_data):
-        self.responses = _StubResponses(verification_data)
+    def __init__(self, verifications_data):
+        self.responses = _StubResponses(verifications_data)
 
 
 class _StubResponsesNoOutput:
@@ -55,6 +64,16 @@ class _StubResponsesNoOutput:
 class _StubOpenAIClientNoOutput:
     def __init__(self):
         self.responses = _StubResponsesNoOutput()
+
+
+class _StubResponsesRaises:
+    def parse(self, **kwargs):
+        raise ValueError("Invalid JSON: EOF while parsing a string")
+
+
+class _StubOpenAIClientRaises:
+    def __init__(self):
+        self.responses = _StubResponsesRaises()
 
 
 # --- Layer 1: excerpts_verified (no LLM involved) ---
@@ -107,107 +126,175 @@ def test_none_excerpt_trivially_passes():
 def test_excerpt_present_but_body_text_missing_fails():
     finding = _finding(older_excerpt="some quote", newer_excerpt=None)
     alignment = SectionAlignment(
-        status="removed",
-        older_section=None,  # no section at all, but finding still cites older_excerpt
-        newer_section=None,
-        similarity=None,
+        status="removed", older_section=None, newer_section=None, similarity=None
     )
     assert excerpts_verified(finding, alignment) is False
 
 
-# --- Hard-fail path: short-circuits before any LLM call ---
+# --- Batched verification ---
 
 
-def test_hard_fail_short_circuits_without_llm_call():
-    finding = _finding(older_excerpt="never said this", tier="high")
-    alignment = SectionAlignment(
-        status="matched",
-        older_section=_section("1A", "totally unrelated text"),
-        newer_section=_section("1A", "new sentence here"),
-        similarity=0.9,
-    )
-    client = _StubOpenAIClient({"confidence": 0.9, "final_tier": "high", "reasoning": "n/a"})
-
-    result = verify_finding(finding, alignment, client=client)
-
-    assert result.excerpt_verified is False
-    assert result.confidence == 0.0
-    assert result.final_tier == "low"
+def test_empty_findings_returns_empty_list_no_llm_call():
+    client = _StubOpenAIClient([])
+    result = verify_findings_for_alignment([], _matched_alignment(), client=client)
+    assert result == []
     assert client.responses.calls == []
 
 
-# --- Layer 2: LLM-based judgment ---
-
-
-def test_verified_finding_parses_llm_output():
-    finding = _finding(older_excerpt="old sentence", newer_excerpt="new sentence")
-    alignment = SectionAlignment(
-        status="matched",
-        older_section=_section("1A", "prefix old sentence suffix"),
-        newer_section=_section("1A", "prefix new sentence suffix"),
-        similarity=0.9,
-    )
+def test_single_finding_verified_in_one_call():
+    finding = _finding()
     client = _StubOpenAIClient(
-        {"confidence": 0.85, "final_tier": "medium", "reasoning": "Reasonably supported."}
+        [{"confidence": 0.85, "final_tier": "medium", "reasoning": "Reasonably supported."}]
     )
 
-    result = verify_finding(finding, alignment, client=client)
+    result = verify_findings_for_alignment([finding], _matched_alignment(), client=client)
 
-    assert result.excerpt_verified is True
-    assert result.confidence == 0.85
-    assert result.final_tier == "medium"
-    assert result.verifier_reasoning == "Reasonably supported."
+    assert len(result) == 1
+    assert result[0].excerpt_verified is True
+    assert result[0].confidence == 0.85
+    assert result[0].final_tier == "medium"
+    assert len(client.responses.calls) == 1
 
 
-def test_none_output_parsed_degrades_and_keeps_original_tier():
-    finding = _finding(older_excerpt="old sentence", newer_excerpt="new sentence", tier="high")
+def test_multiple_findings_verified_in_a_single_batched_call():
+    findings = [
+        _finding(category="new_litigation", tier="high"),
+        _finding(category="accounting_policy_change", tier="low"),
+    ]
+    client = _StubOpenAIClient(
+        [
+            {"confidence": 0.9, "final_tier": "high", "reasoning": "First claim holds up."},
+            {"confidence": 0.2, "final_tier": "low", "reasoning": "Second claim is weak."},
+        ]
+    )
+
+    result = verify_findings_for_alignment(findings, _matched_alignment(), client=client)
+
+    assert len(result) == 2
+    assert len(client.responses.calls) == 1  # one call for both, not two
+    assert result[0].confidence == 0.9
+    assert result[0].final_tier == "high"
+    assert result[1].confidence == 0.2
+    assert result[1].final_tier == "low"
+
+
+def test_hallucinated_finding_hard_fails_without_entering_the_batch():
+    good_finding = _finding(older_excerpt="old sentence", newer_excerpt="new sentence")
+    bad_finding = _finding(older_excerpt="never actually said", newer_excerpt=None)
+    alignment = _matched_alignment()
+    client = _StubOpenAIClient(
+        [{"confidence": 0.9, "final_tier": "high", "reasoning": "Holds up."}]
+    )
+
+    result = verify_findings_for_alignment([good_finding, bad_finding], alignment, client=client)
+
+    assert len(result) == 2
+    by_excerpt = {r.finding.older_excerpt: r for r in result}
+    assert by_excerpt["old sentence"].excerpt_verified is True
+    assert by_excerpt["old sentence"].confidence == 0.9
+    assert by_excerpt["never actually said"].excerpt_verified is False
+    assert by_excerpt["never actually said"].confidence == 0.0
+    # Only the surviving finding was sent to the LLM -- one call, one claim.
+    assert len(client.responses.calls) == 1
+
+
+def test_all_hallucinated_findings_make_zero_llm_calls():
+    findings = [
+        _finding(older_excerpt="never said this", newer_excerpt=None),
+        _finding(older_excerpt="nor this", newer_excerpt=None),
+    ]
     alignment = SectionAlignment(
-        status="matched",
-        older_section=_section("1A", "prefix old sentence suffix"),
-        newer_section=_section("1A", "prefix new sentence suffix"),
-        similarity=0.9,
+        status="removed",
+        older_section=_section("1A", "completely unrelated content"),
+        newer_section=None,
+        similarity=None,
     )
+    client = _StubOpenAIClient([{"confidence": 0.9, "final_tier": "high", "reasoning": "n/a"}])
+
+    result = verify_findings_for_alignment(findings, alignment, client=client)
+
+    assert all(r.excerpt_verified is False for r in result)
+    assert all(r.confidence == 0.0 for r in result)
+    assert client.responses.calls == []
+
+
+def test_count_mismatch_degrades_all_needing_llm_to_fallback():
+    findings = [_finding(tier="high"), _finding(tier="medium")]
+    # Only one verification returned for two findings -- a malformed/
+    # mismatched response, not a valid one to trust.
+    client = _StubOpenAIClient(
+        [{"confidence": 0.9, "final_tier": "high", "reasoning": "only one"}]
+    )
+
+    result = verify_findings_for_alignment(findings, _matched_alignment(), client=client)
+
+    assert len(result) == 2
+    assert all(r.confidence == 0.0 for r in result)
+    assert {r.final_tier for r in result} == {"high", "medium"}  # each keeps its own original tier
+
+
+def test_none_output_parsed_degrades_and_keeps_each_original_tier():
+    findings = [_finding(tier="high"), _finding(tier="low")]
     client = _StubOpenAIClientNoOutput()
 
-    result = verify_finding(finding, alignment, client=client)
+    result = verify_findings_for_alignment(findings, _matched_alignment(), client=client)
 
-    assert result.excerpt_verified is True
-    assert result.confidence == 0.0
-    assert result.final_tier == "high"  # infra failure keeps original, doesn't force "low"
+    assert len(result) == 2
+    assert all(r.excerpt_verified is True for r in result)
+    assert all(r.confidence == 0.0 for r in result)
+    assert {r.final_tier for r in result} == {"high", "low"}
 
 
-def test_sends_correct_model_reasoning_and_prompt_version():
-    finding = _finding(older_excerpt="old sentence", newer_excerpt="new sentence")
-    alignment = SectionAlignment(
-        status="matched",
-        older_section=_section("1A", "prefix old sentence suffix"),
-        newer_section=_section("1A", "prefix new sentence suffix"),
-        similarity=0.9,
+def test_parse_exception_degrades_instead_of_crashing():
+    finding = _finding(tier="high")
+    client = _StubOpenAIClientRaises()
+
+    result = verify_findings_for_alignment([finding], _matched_alignment(), client=client)
+
+    assert len(result) == 1
+    assert result[0].confidence == 0.0
+    assert result[0].final_tier == "high"
+
+
+def test_sends_correct_model_and_reasoning_effort():
+    client = _StubOpenAIClient(
+        [{"confidence": 0.5, "final_tier": "low", "reasoning": "r"}]
     )
-    client = _StubOpenAIClient({"confidence": 0.5, "final_tier": "low", "reasoning": "r"})
 
-    result = verify_finding(finding, alignment, client=client)
+    verify_findings_for_alignment([_finding()], _matched_alignment(), client=client)
 
     call = client.responses.calls[0]
     assert call["model"] == DEFAULT_CHAT_MODEL
     assert call["reasoning"] == {"effort": DEFAULT_REASONING_EFFORT}
-    assert result.verifier_model == DEFAULT_CHAT_MODEL
-    assert result.verifier_prompt_version == PROMPT_VERSION
 
 
-def test_tier_downgrade_flows_through():
-    finding = _finding(tier="high", older_excerpt="old sentence", newer_excerpt="new sentence")
-    alignment = SectionAlignment(
-        status="matched",
-        older_section=_section("1A", "prefix old sentence suffix"),
-        newer_section=_section("1A", "prefix new sentence suffix"),
-        similarity=0.9,
-    )
+def test_batch_prompt_includes_every_claim():
+    findings = [
+        _finding(category="new_litigation", older_excerpt="old sentence"),
+        _finding(category="accounting_policy_change", older_excerpt="another old sentence"),
+    ]
+    alignment = _matched_alignment(older_text="old sentence and another old sentence appear here")
     client = _StubOpenAIClient(
-        {"confidence": 0.15, "final_tier": "low", "reasoning": "Overclaimed."}
+        [
+            {"confidence": 0.5, "final_tier": "low", "reasoning": "r1"},
+            {"confidence": 0.5, "final_tier": "low", "reasoning": "r2"},
+        ]
     )
 
-    result = verify_finding(finding, alignment, client=client)
+    verify_findings_for_alignment(findings, alignment, client=client)
 
-    assert result.finding.tier == "high"  # original preserved for audit trail
-    assert result.final_tier == "low"  # verifier's independent assessment
+    user_prompt = client.responses.calls[0]["input"][1]["content"]
+    assert "CLAIM 1" in user_prompt
+    assert "CLAIM 2" in user_prompt
+    assert "new_litigation" in user_prompt
+    assert "accounting_policy_change" in user_prompt
+
+
+def test_prompt_version_recorded_on_result():
+    client = _StubOpenAIClient(
+        [{"confidence": 0.5, "final_tier": "low", "reasoning": "r"}]
+    )
+
+    (result,) = verify_findings_for_alignment([_finding()], _matched_alignment(), client=client)
+
+    assert result.verifier_prompt_version == PROMPT_VERSION

@@ -7,11 +7,11 @@ from ..embeddings.openai_client import get_embeddings
 from .aligner import DEFAULT_MATCH_THRESHOLD, SectionAlignment, align_sections
 from .classifier import Finding, classify_alignment
 from .state import PipelineState
-from .verifier import VerifiedFinding, verify_finding
+from .verifier import VerifiedFinding, verify_findings_for_alignment
 
 EmbedFn = Callable[[list[str]], list[list[float]]]
 ClassifyFn = Callable[[SectionAlignment], list[Finding]]
-VerifyFn = Callable[[Finding, SectionAlignment], VerifiedFinding]
+VerifyFn = Callable[[list[Finding], SectionAlignment], list[VerifiedFinding]]
 
 # classify_fn/verify_fn calls are independent per item (no shared state, each
 # creates its own OpenAI client internally) -- run them concurrently rather
@@ -59,18 +59,40 @@ def _make_classify_node(classify_fn: ClassifyFn):
     return classify_node
 
 
+def _group_by_alignment(
+    classified_pairs: list[tuple[SectionAlignment, Finding]],
+) -> list[tuple[SectionAlignment, list[Finding]]]:
+    """Groups findings by their originating alignment so all of one
+    section's findings can be verified in a single batched call. Grouped by
+    object identity (id()), not value equality -- SectionAlignment holds
+    dicts, which aren't hashable, so it can't be used as a dict key
+    directly; identity is safe here because classify_node builds
+    classified_pairs by reusing the exact same alignment object for every
+    finding it produces.
+    """
+    groups: dict[int, tuple[SectionAlignment, list[Finding]]] = {}
+    order: list[int] = []
+    for alignment, finding in classified_pairs:
+        key = id(alignment)
+        if key not in groups:
+            groups[key] = (alignment, [])
+            order.append(key)
+        groups[key][1].append(finding)
+    return [groups[key] for key in order]
+
+
 def _make_verify_node(verify_fn: VerifyFn):
     def verify_node(state: PipelineState) -> dict:
-        classified_pairs = state["classified_pairs"]
-        if not classified_pairs:
+        groups = _group_by_alignment(state["classified_pairs"])
+        if not groups:
             return {"verified_findings": []}
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            verified_findings = list(
-                executor.map(
-                    lambda pair: verify_fn(pair[1], pair[0]), classified_pairs
-                )
+            results = list(
+                executor.map(lambda group: verify_fn(group[1], group[0]), groups)
             )
+
+        verified_findings = [vf for group_results in results for vf in group_results]
         return {"verified_findings": verified_findings}
 
     return verify_node
@@ -79,7 +101,7 @@ def _make_verify_node(verify_fn: VerifyFn):
 def build_graph(
     embed_fn: EmbedFn = get_embeddings,
     classify_fn: ClassifyFn = classify_alignment,
-    verify_fn: VerifyFn = verify_finding,
+    verify_fn: VerifyFn = verify_findings_for_alignment,
     threshold: float = DEFAULT_MATCH_THRESHOLD,
 ):
     builder = StateGraph(PipelineState)
