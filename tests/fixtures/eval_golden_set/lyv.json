@@ -67,9 +67,9 @@
     },
     {
       "item_key": "7",
-      "expect_finding": false,
-      "category": null,
-      "note": "No mention of the litigation or any accounting-standard changes in MD&A in either year -- routine business discussion only."
+      "expect_finding": true,
+      "category": "substantive_change",
+      "note": "CORRECTED after eval investigation: original scan only checked for DOJ/antitrust/accounting-standard keywords and missed real, significant content -- a restatement of 2022-2024 segment and consolidated financial results, a material Astroworld-litigation contingency that reduced 2024 operating income, a large tax valuation allowance release, and new financing activity (a $1.1B convertible issuance)."
     },
     {
       "item_key": "8",

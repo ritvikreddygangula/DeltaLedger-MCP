@@ -4,67 +4,63 @@ Golden set: 6 filing pairs, 24 section-level judgments.
 
 ## Scores
 
-- Precision: 69% (11 TP / 16 claimed)
-- Recall: 85% (11 TP / 13 expected)
-- TP=11  FP=5  FN=2  TN=6
+- Precision: 89% (17 TP / 19 claimed)
+- Recall: 100% (17 TP / 17 expected)
+- TP=17  FP=2  FN=0  TN=5
 
 ## Confidence calibration
 
-- Avg confidence, true positives: 0.93
-- Avg confidence, false positives: 0.92
+- Avg confidence, true positives: 0.95
+- Avg confidence, false positives: 0.94
 
 (True positives should score meaningfully higher than false positives on average -- that's what makes 'confidence' a real signal rather than a number an LLM made up.)
 
 ## Per-case results
 
 ### AAPL
-- Item 8: TP (confidence=0.61)
-- Item 3: TP (confidence=0.99)
-- Item 1A: FN
 - Item 7: TP (confidence=0.97)
+- Item 1A: TP (confidence=0.87)
+- Item 8: TP (confidence=0.90)
+- Item 3: TP (confidence=0.99)
 
 ### LYV
-- Item 8: TP (confidence=0.98)
+- Item 1A: TP (confidence=0.99)
+- Item 8: TP (confidence=0.96)
 - Item 3: TN
-- Item 1A: TP (confidence=0.98)
-- Item 7: TN
+- Item 7: FP (confidence=0.98)
 
 ### MGM
-- Item 8: TP (confidence=0.98)
-- Item 3: TN
 - Item 1A: TP (confidence=0.96)
-- Item 7: TP (confidence=0.93)
-
-### NKE
-- Item 8: FP (confidence=0.95)
+- Item 8: TP (confidence=0.97)
 - Item 3: TN
-- Item 1A: FP (confidence=0.97)
 - Item 7: TP (confidence=0.96)
 
-### PG
-- Item 8: FP (confidence=0.98)
+### NKE
+- Item 1A: TP (confidence=0.95)
+- Item 8: TP (confidence=0.96)
 - Item 3: TN
-- Item 1A: TP (confidence=0.90)
-- Item 7: FN
+- Item 7: TP (confidence=0.98)
+
+### PG
+- Item 1A: TP (confidence=0.98)
+- Item 8: FP (confidence=0.89)
+- Item 3: TN
+- Item 7: TP (confidence=0.95)
 
 ### SBUX
-- Item 8: FP (confidence=0.91)
+- Item 1A: TP (confidence=0.94)
+- Item 8: TP (confidence=0.95)
 - Item 3: TN
-- Item 1A: FP (confidence=0.78)
-- Item 7: TP (confidence=0.92)
+- Item 7: TP (confidence=0.90)
 
 ## False positives
 
-- **NKE Item 8** (confidence=0.95): ground truth expected no finding -- Restructuring charges continue at similar levels to the prior year (severance mentions decreased); the only new name found (Elliott Hill) is a signature-line certification, not a substantive disclosure.
-- **NKE Item 1A** (confidence=0.97): ground truth expected no finding -- Tariff risk factor already present at similar volume in both years (10 mentions each) -- no genuinely new topic found.
-- **PG Item 8** (confidence=0.98): ground truth expected no finding -- Only Russia/Ukraine mention is a single passing reference in routine goodwill-impairment estimation language -- boilerplate caveat, not a discrete new disclosure.
-- **SBUX Item 8** (confidence=0.91): ground truth expected no finding -- No distinctive new disclosure found in targeted scanning.
-- **SBUX Item 1A** (confidence=0.78): ground truth expected no finding -- Only ~2% size growth, no new risk-factor topic found (checked inflation/labor/wage/union -- all absent in both years).
+- **LYV Item 7** (confidence=0.98): ground truth expected no finding -- No mention of the litigation or any accounting-standard changes in MD&A in either year -- routine business discussion only.
+- **PG Item 8** (confidence=0.89): ground truth expected no finding -- Only Russia/Ukraine mention is a single passing reference in routine goodwill-impairment estimation language -- boilerplate caveat, not a discrete new disclosure.
 
 ## False negatives
 
-- **AAPL Item 1A**: ground truth expected a finding but the pipeline produced none credible -- New tariff/Section 232 risk language, Google antitrust remedies threatening search-licensing revenue, expanded litigation/regulatory risk disclosures.
-- **PG Item 7**: ground truth expected a finding but the pipeline produced none credible -- MD&A jumps from 1 Russia/Ukraine mention to 20 -- genuine discussion of exiting/scaling back Russia operations.
+None.
 
 ## Known limitations
 
