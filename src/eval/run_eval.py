@@ -9,6 +9,8 @@ Usage: uv run python -m src.eval.run_eval
 
 from pathlib import Path
 
+from dotenv import load_dotenv
+
 from ..agents.graph import build_graph
 from .golden_set import GoldenSetCase, load_golden_set
 from .scoring import EvalReport, SectionScore, aggregate_scores, score_case
@@ -59,6 +61,7 @@ def run_case(case: GoldenSetCase) -> list[SectionScore]:
 def run_eval(
     golden_set_dir: Path = GOLDEN_SET_DIR,
 ) -> tuple[EvalReport, list[tuple[GoldenSetCase, list[SectionScore]]]]:
+    load_dotenv()  # pytest doesn't load .env automatically the way our scripts do
     cases = load_golden_set(golden_set_dir)
     case_scores = [(case, run_case(case)) for case in cases]
     all_scores = [score for _, scores in case_scores for score in scores]
