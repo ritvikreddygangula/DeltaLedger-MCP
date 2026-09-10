@@ -1,5 +1,6 @@
 from src.agents.classifier import Finding
 from src.agents.graph import build_graph
+from src.agents.verifier import VerifiedFinding
 
 
 def _section(item_key: str, body_text: str = "") -> dict:
@@ -7,10 +8,27 @@ def _section(item_key: str, body_text: str = "") -> dict:
 
 
 def _no_op_classify(alignment):
-    """Fake classify_fn for tests that only care about the align step --
+    """Fake classify_fn for tests that only care about earlier steps --
     must be passed explicitly everywhere, since build_graph's real default
     would otherwise make a live OpenAI call the moment classify runs."""
     return []
+
+
+def _no_op_verify(finding, alignment):
+    """Fake verify_fn, same reasoning as _no_op_classify -- must be passed
+    explicitly everywhere, since build_graph's real default would otherwise
+    make a live OpenAI call the moment verify runs."""
+    return VerifiedFinding(
+        finding=finding,
+        excerpt_verified=True,
+        confidence=1.0,
+        verifier_reasoning="stub",
+        final_tier=finding.tier,
+        classifier_model="stub",
+        classifier_prompt_version="stub",
+        verifier_model="stub",
+        verifier_prompt_version="stub",
+    )
 
 
 def test_graph_flows_state_through_align_node():
@@ -19,7 +37,7 @@ def test_graph_flows_state_through_align_node():
     def fake_embed(texts: list[str]) -> list[list[float]]:
         return [embeddings_by_text[t] for t in texts]
 
-    graph = build_graph(embed_fn=fake_embed, classify_fn=_no_op_classify)
+    graph = build_graph(embed_fn=fake_embed, classify_fn=_no_op_classify, verify_fn=_no_op_verify)
     result = graph.invoke(
         {
             "older_sections": [_section("1A", "older text")],
@@ -40,7 +58,9 @@ def test_graph_respects_custom_threshold():
     def fake_embed(texts: list[str]) -> list[list[float]]:
         return [embeddings_by_text[t] for t in texts]
 
-    graph = build_graph(embed_fn=fake_embed, classify_fn=_no_op_classify, threshold=0.9)
+    graph = build_graph(
+        embed_fn=fake_embed, classify_fn=_no_op_classify, verify_fn=_no_op_verify, threshold=0.9
+    )
     result = graph.invoke(
         {
             "older_sections": [_section("1A", "a")],
@@ -59,7 +79,7 @@ def test_graph_never_imports_real_openai_client():
         calls.append(texts)
         return [[1.0, 0.0] for _ in texts]
 
-    graph = build_graph(embed_fn=fake_embed, classify_fn=_no_op_classify)
+    graph = build_graph(embed_fn=fake_embed, classify_fn=_no_op_classify, verify_fn=_no_op_verify)
     graph.invoke(
         {
             "older_sections": [_section("1A", "x")],
@@ -89,7 +109,7 @@ def test_graph_flows_alignments_into_classify_node():
             )
         ]
 
-    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify)
+    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify, verify_fn=_no_op_verify)
     result = graph.invoke(
         {
             "older_sections": [_section("1A", "x")],
@@ -120,7 +140,7 @@ def test_classify_node_flattens_findings_across_multiple_alignments():
             )
         ]
 
-    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify)
+    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify, verify_fn=_no_op_verify)
     result = graph.invoke(
         {
             "older_sections": [_section("1A", "x"), _section("3", "y")],
@@ -142,7 +162,7 @@ def test_graph_never_imports_real_openai_client_for_classify_either():
         classify_calls.append(alignment)
         return []
 
-    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify)
+    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify, verify_fn=_no_op_verify)
     graph.invoke(
         {
             "older_sections": [_section("1A", "x")],
@@ -151,3 +171,128 @@ def test_graph_never_imports_real_openai_client_for_classify_either():
     )
 
     assert len(classify_calls) == 1
+
+
+def test_graph_flows_classified_pairs_into_verify_node():
+    def fake_embed(texts: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0] for _ in texts]
+
+    def fake_classify(alignment):
+        return [
+            Finding(
+                item_key=(alignment.older_section or alignment.newer_section)["item_key"],
+                category="other",
+                tier="high",
+                reasoning="stub",
+                older_excerpt=None,
+                newer_excerpt=None,
+            )
+        ]
+
+    verify_calls = []
+
+    def fake_verify(finding, alignment):
+        verify_calls.append((finding, alignment))
+        return VerifiedFinding(
+            finding=finding,
+            excerpt_verified=True,
+            confidence=0.5,
+            verifier_reasoning="stub",
+            final_tier="medium",
+            classifier_model="m",
+            classifier_prompt_version="v1",
+            verifier_model="m",
+            verifier_prompt_version="v1",
+        )
+
+    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify, verify_fn=fake_verify)
+    result = graph.invoke(
+        {
+            "older_sections": [_section("1A", "x")],
+            "newer_sections": [_section("1A", "y")],
+        }
+    )
+
+    assert len(verify_calls) == 1
+    called_finding, called_alignment = verify_calls[0]
+    assert called_finding.item_key == "1A"
+    assert called_alignment.status == "matched"
+    assert len(result["verified_findings"]) == 1
+    assert result["verified_findings"][0].final_tier == "medium"
+
+
+def test_classified_pairs_correlates_finding_to_correct_alignment_when_item_keys_collide():
+    # Two independent alignments sharing the same item_key -- a real
+    # scenario when a Hungarian-forced pairing falls below threshold and
+    # the older/newer sides become separate "removed"/"new" alignments.
+    # Finding.item_key alone can't disambiguate which alignment produced
+    # which finding; classified_pairs must carry the real relationship.
+    # Each finding's reasoning is stamped with its source alignment's
+    # body_text so the correlation can actually be checked, not assumed.
+    def fake_embed(texts: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0] for _ in texts]
+
+    def fake_classify(alignment):
+        return [
+            Finding(
+                item_key="1A",  # same item_key regardless of which alignment
+                category="other",
+                tier="low",
+                reasoning=f"from {alignment.older_section['body_text']}",
+                older_excerpt=None,
+                newer_excerpt=None,
+            )
+        ]
+
+    verify_calls = []
+
+    def fake_verify(finding, alignment):
+        verify_calls.append((finding, alignment))
+        return _no_op_verify(finding, alignment)
+
+    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify, verify_fn=fake_verify)
+    result = graph.invoke(
+        {
+            "older_sections": [_section("1A", "a"), _section("1A", "b")],
+            "newer_sections": [],
+        }
+    )
+
+    assert len(result["alignments"]) == 2
+    assert {a.status for a in result["alignments"]} == {"removed"}
+    assert len(verify_calls) == 2
+    for finding, alignment in verify_calls:
+        assert finding.reasoning == f"from {alignment.older_section['body_text']}"
+
+
+def test_graph_never_imports_real_openai_client_for_verify_either():
+    def fake_embed(texts: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0] for _ in texts]
+
+    def fake_classify(alignment):
+        return [
+            Finding(
+                item_key="1A",
+                category="other",
+                tier="low",
+                reasoning="stub",
+                older_excerpt=None,
+                newer_excerpt=None,
+            )
+        ]
+
+    verify_calls = []
+
+    def fake_verify(finding, alignment):
+        verify_calls.append(finding)
+        return _no_op_verify(finding, alignment)
+
+    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify, verify_fn=fake_verify)
+    graph.invoke(
+        {
+            "older_sections": [_section("1A", "x")],
+            "newer_sections": [_section("1A", "y")],
+        }
+    )
+
+    assert len(verify_calls) == 1

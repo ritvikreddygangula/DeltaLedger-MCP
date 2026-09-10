@@ -19,6 +19,7 @@ MaterialityTier = Literal["high", "medium", "low"]
 
 DEFAULT_CHAT_MODEL = "gpt-5.4-mini"
 DEFAULT_REASONING_EFFORT = "low"
+PROMPT_VERSION = "v1"
 
 
 @dataclass(frozen=True)

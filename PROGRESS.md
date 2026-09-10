@@ -119,4 +119,35 @@ Scope decisions: storage is local SQLite for this Part (Postgres migration + emb
 
 **Open decisions / blockers:** none.
 
-## Up next: Part 5 — Verifier/Critic Agent (not started)
+## Part 5 — Verifier/Critic Agent + Audit Trail (branch `part5-verifier-agent`)
+
+**What this Part adds:** a governance layer that re-checks every classifier finding instead of trusting it outright — the spec calls this the single most defensible design choice in the whole project. Two layers: (1) a free, deterministic check that each cited excerpt is actually a verbatim substring of the source text — a hallucinated quote fails here and never reaches the LLM at all; (2) for excerpts that check out, a second, deliberately skeptical LLM call judges whether the excerpt actually *supports* the claimed category/tier, producing a confidence score and an independent tier assessment. Also adds the audit trail: every finding — classifier's claim and verifier's re-check — persisted to a new Postgres `findings` table with full provenance (which model/prompt version produced each half, when).
+
+**A live-tested prompt bug worth remembering:** the first version of the verifier's system prompt asked for "confidence" without specifying confidence in *what*. Empirically, the model interpreted this as confidence in its own re-assessment — so an overclaimed finding that got correctly downgraded still came back with confidence=0.98 (the model was very sure about the downgrade), which is useless for Part 6's planned calibration check ("do high-confidence findings hold up more often?"). Fixing the prompt to explicitly say confidence measures support for the *original* claim (0.0 = original claim baseless, 1.0 = original claim fully correct), independent of how certain the verifier is about its own downgrade decision, fixed it immediately: the same overclaimed case then scored 0.12, a well-supported case scored 0.79. Caught via a few cents of live test calls before writing any code against the ambiguous version — the same "verify before committing" practice that caught Part 4's model/API assumptions.
+
+**`Finding.item_key` cannot be used to re-match a finding to its originating alignment.** Traced a real collision: when a Hungarian-forced pairing falls below threshold, the older section becomes a `"removed"` alignment and the newer section becomes a separate `"new"` alignment — both can carry the *same* `item_key` in one run. Fixed by having the classify node emit `classified_pairs: list[tuple[SectionAlignment, Finding]]` alongside the existing flat `classifications` list, so the verify node never needs to re-derive the relationship. Proven with a dedicated test (`test_classified_pairs_correlates_finding_to_correct_alignment_when_item_keys_collide`) using two same-`item_key` alignments with distinguishable content, not just asserted by reasoning about it.
+
+**Same silent-real-API-call hazard as Part 4, pre-empted this time instead of discovered after the fact.** Every `build_graph(...)` call in `test_graph.py` — including the six pre-existing ones from Parts 3-4 — needed an explicit no-op `verify_fn` the moment `verify_fn` started defaulting to the real `verify_finding`. Fixed before ever running the suite with the new wiring in place, not after.
+
+**The audit table is append-only, never upsert** — unlike `upsert_filing` (a filing is an immutable external document, safe to dedup), a findings row is evidence from one specific run with one specific model/prompt version; overwriting on rerun would destroy the audit trail this table exists to build. Locked in with a regression test asserting `insert_findings` never issues a `DELETE`.
+
+**Script evolution:** `scripts/classify_filing.py` → `scripts/run_pipeline.py` — a bigger naming jump than the mechanical per-stage renames before it (`compare_sections` → `align_filing` → `classify_filing`), because the actual role changed: this is the first script that persists its own output rather than just printing a diagnostic. It's the closest thing to a production entry point this project has right now.
+
+- [x] Empirical model check for the verifier's schema + prompt wording (see the confidence-calibration bug above)
+- [x] `PROMPT_VERSION` constant added to `classifier.py` (additive only)
+- [x] `VerifiedFinding` + two-layer `verify_finding` (`src/agents/verifier.py`)
+- [x] Verifier tests including the zero-LLM-calls-on-hallucination proof (`tests/agents/test_verifier.py`)
+- [x] `findings` table (`src/storage/schema.py`)
+- [x] `insert_findings` write path (`src/storage/db.py`)
+- [x] Storage tests including the append-only regression guard
+- [x] State + graph wiring: `classified_pairs`, `verified_findings` typed correctly, `align -> classify -> verify -> END`
+- [x] Graph tests extended; every pre-existing `build_graph()` call audited for the silent-real-API-call hazard
+- [x] `scripts/run_pipeline.py`; deleted superseded `scripts/classify_filing.py`; updated README
+- [ ] Bookkeeping (this update)
+- [ ] Live verification (see below)
+
+**Current sub-step:** bookkeeping, then live verification.
+
+**Open decisions / blockers:** live verification (`uv run python -m scripts.run_pipeline AAPL` against real Postgres + OpenAI) not yet run — first script that both classifies AND verifies (double the chat-completion cost of Part 4's script, still trivial) and persists to Postgres, so also the first opportunity to see Layer 1's whitespace-normalization hold up (or not) against real filing text at scale.
+
+## Up next: Part 6 — Eval Harness (not started)

@@ -1,11 +1,13 @@
 """Manual end-to-end verification -- NOT run in CI (needs a real DATABASE_URL
 pointing at Postgres with data already ingested via scripts/ingest_ticker.py,
-and a real OPENAI_API_KEY -- this one makes real, billed OpenAI chat calls,
-unlike the embedding-only scripts before it). Runs the full align+classify
-LangGraph pipeline and prints matched/removed/new sections plus every
-material finding the classifier identified.
+and a real OPENAI_API_KEY -- this makes real, billed OpenAI chat calls for
+both classification and verification). Runs the full align+classify+verify
+LangGraph pipeline, prints the alignment report plus every finding's
+classification AND verification result, then persists everything to the
+`findings` table -- this is the first script in the project that writes its
+own output back to the database, not just filings/sections.
 
-Usage: uv run python -m scripts.classify_filing AAPL
+Usage: uv run python -m scripts.run_pipeline AAPL
 """
 
 import sys
@@ -13,12 +15,19 @@ import sys
 from dotenv import load_dotenv
 
 from src.agents.graph import build_graph
-from src.storage.db import get_connection, get_filing_sections, get_filings_for_ticker
+from src.storage.db import (
+    get_connection,
+    get_filing_sections,
+    get_filings_for_ticker,
+    init_db,
+    insert_findings,
+)
 
 
 def main(ticker: str) -> None:
     load_dotenv()
     conn = get_connection()
+    init_db(conn)  # idempotent (CREATE TABLE IF NOT EXISTS) -- ensures `findings` exists
     filings = get_filings_for_ticker(conn, ticker, form_type="10-K", limit=2)
     if len(filings) < 2:
         conn.close()
@@ -30,7 +39,6 @@ def main(ticker: str) -> None:
 
     older_sections = get_filing_sections(conn, older["id"])
     newer_sections = get_filing_sections(conn, newer["id"])
-    conn.close()
 
     graph = build_graph()
     result = graph.invoke(
@@ -59,15 +67,32 @@ def main(ticker: str) -> None:
                 f"({alignment.newer_section['heading_text']!r}) -- not present in older filing"
             )
 
-    findings = result["classifications"]
-    print(f"\n{len(findings)} material finding(s):")
-    for finding in findings:
-        print(f"\n  [{finding.tier.upper()}] Item {finding.item_key} -- {finding.category}")
-        print(f"    {finding.reasoning}")
+    verified_findings = result["verified_findings"]
+    print(f"\n{len(verified_findings)} finding(s) after verification:")
+    for vf in verified_findings:
+        finding = vf.finding
+        tier_note = (
+            f"{finding.tier} -> {vf.final_tier}" if finding.tier != vf.final_tier else finding.tier
+        )
+        print(f"\n  [{tier_note.upper()}] Item {finding.item_key} -- {finding.category}")
+        print(f"    classifier: {finding.reasoning}")
+        print(
+            f"    verifier (confidence={vf.confidence:.2f}, "
+            f"excerpt_verified={vf.excerpt_verified}): {vf.verifier_reasoning}"
+        )
         if finding.older_excerpt:
             print(f'    OLDER: "{finding.older_excerpt}"')
         if finding.newer_excerpt:
             print(f'    NEWER: "{finding.newer_excerpt}"')
+
+    insert_findings(conn, older["id"], newer["id"], verified_findings)
+    conn.close()
+
+    unverified = sum(1 for vf in verified_findings if not vf.excerpt_verified)
+    print(
+        f"\nPersisted {len(verified_findings)} finding(s) to Postgres "
+        f"({unverified} failed excerpt verification)."
+    )
 
 
 if __name__ == "__main__":

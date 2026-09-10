@@ -4,6 +4,7 @@ from datetime import datetime, timezone
 import psycopg
 from psycopg.rows import dict_row
 
+from ..agents.verifier import VerifiedFinding
 from ..connectors.base import FilingMetadata
 from ..connectors.section_parser import TaggedSection
 from .schema import SCHEMA_DDL
@@ -76,3 +77,49 @@ def get_filings_for_ticker(
            ORDER BY filing_date DESC LIMIT %s""",
         (ticker.upper(), form_type, limit),
     ).fetchall()
+
+
+def insert_findings(
+    conn: psycopg.Connection,
+    older_filing_id: int,
+    newer_filing_id: int,
+    verified_findings: list[VerifiedFinding],
+) -> None:
+    """Append-only: unlike upsert_filing (a filing is an immutable external
+    document, safe to dedup) or insert_sections (replaces a filing's own
+    sections wholesale), a findings row is evidence from one specific run
+    with one specific model/prompt version. Overwriting on rerun would
+    destroy the audit trail this table exists to build.
+    """
+    with conn.cursor() as cur:
+        cur.executemany(
+            """INSERT INTO findings
+                   (older_filing_id, newer_filing_id, item_key, category, tier, reasoning,
+                    older_excerpt, newer_excerpt, excerpt_verified, confidence,
+                    verifier_reasoning, final_tier, classifier_model, classifier_prompt_version,
+                    verifier_model, verifier_prompt_version, created_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
+            [
+                (
+                    older_filing_id,
+                    newer_filing_id,
+                    vf.finding.item_key,
+                    vf.finding.category,
+                    vf.finding.tier,
+                    vf.finding.reasoning,
+                    vf.finding.older_excerpt,
+                    vf.finding.newer_excerpt,
+                    vf.excerpt_verified,
+                    vf.confidence,
+                    vf.verifier_reasoning,
+                    vf.final_tier,
+                    vf.classifier_model,
+                    vf.classifier_prompt_version,
+                    vf.verifier_model,
+                    vf.verifier_prompt_version,
+                    datetime.now(timezone.utc),
+                )
+                for vf in verified_findings
+            ],
+        )
+    conn.commit()

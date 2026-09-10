@@ -1,8 +1,11 @@
+from src.agents.classifier import Finding
+from src.agents.verifier import VerifiedFinding
 from src.connectors.base import FilingMetadata
 from src.connectors.section_parser import TaggedSection
 from src.storage.db import (
     get_filing_sections,
     get_filings_for_ticker,
+    insert_findings,
     insert_sections,
     upsert_filing,
 )
@@ -123,3 +126,53 @@ def test_get_filings_for_ticker_uppercases_and_limits():
 
     assert result == rows
     assert conn.calls[0]["params"] == ("AAPL", "10-K", 2)
+
+
+def _make_verified_finding(**overrides) -> VerifiedFinding:
+    finding = Finding(
+        item_key="1A",
+        category="substantive_change",
+        tier="high",
+        reasoning="Something changed.",
+        older_excerpt="old text",
+        newer_excerpt="new text",
+    )
+    data = {
+        "finding": finding,
+        "excerpt_verified": True,
+        "confidence": 0.85,
+        "verifier_reasoning": "Well supported.",
+        "final_tier": "high",
+        "classifier_model": "gpt-5.4-mini",
+        "classifier_prompt_version": "v1",
+        "verifier_model": "gpt-5.4-mini",
+        "verifier_prompt_version": "v1",
+    }
+    data.update(overrides)
+    return VerifiedFinding(**data)
+
+
+def test_insert_findings_bulk_inserts_with_correct_params():
+    conn = _StubConnection()
+    verified_findings = [_make_verified_finding()]
+
+    insert_findings(conn, older_filing_id=1, newer_filing_id=2, verified_findings=verified_findings)
+
+    assert conn.committed is True
+    (insert_call,) = conn.calls
+    assert "INSERT INTO findings" in insert_call["query"]
+    (params,) = insert_call["params_seq"]
+    assert params[0] == 1  # older_filing_id
+    assert params[1] == 2  # newer_filing_id
+    assert params[2] == "1A"  # item_key
+    assert params[3] == "substantive_change"  # category
+
+
+def test_insert_findings_never_issues_delete():
+    conn = _StubConnection()
+
+    insert_findings(
+        conn, older_filing_id=1, newer_filing_id=2, verified_findings=[_make_verified_finding()]
+    )
+
+    assert not any("DELETE" in call["query"] for call in conn.calls)
