@@ -26,3 +26,7 @@ dev = [
 
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = [
+    "eval: real OpenAI calls against the golden set, excluded from the default run",
+]
+addopts = "-m 'not eval'"
