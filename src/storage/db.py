@@ -123,3 +123,14 @@ def insert_findings(
             ],
         )
     conn.commit()
+
+
+def get_findings_for_filing_pair(
+    conn: psycopg.Connection, older_filing_id: int, newer_filing_id: int
+) -> list[dict]:
+    return conn.execute(
+        """SELECT * FROM findings
+           WHERE older_filing_id = %s AND newer_filing_id = %s
+           ORDER BY id""",
+        (older_filing_id, newer_filing_id),
+    ).fetchall()
