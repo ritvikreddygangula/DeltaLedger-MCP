@@ -5,8 +5,11 @@ description = "Filing materiality & diligence agent: detects and classifies mate
 requires-python = ">=3.12"
 dependencies = [
     "beautifulsoup4>=4.15.0",
+    "fastapi>=0.141.1",
     "langgraph>=1.2.11",
     "lxml>=6.1.3",
+    "mangum>=0.22.0",
+    "mcp>=2.2.0",
     "numpy>=2.5.3",
     "openai>=3.8.0",
     "psycopg[binary]>=3.3.5",
@@ -21,6 +24,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
+    "httpx>=0.28.1",
     "pytest>=9.1.1",
     "ruff>=0.16.6",
 ]
