@@ -16,3 +16,7 @@ data/
 
 # OS
 .DS_Store
+
+# AWS SAM local build/deploy cache
+.aws-sam/
+samconfig.toml
