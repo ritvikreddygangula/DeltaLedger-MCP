@@ -46,8 +46,8 @@ def test_get_report_returns_older_and_newer_filing_with_findings():
     assert result["newer_filing"]["id"] == 2
     assert result["older_filing"]["id"] == 1
     assert result["findings"] == findings
-    # get_findings_for_filing_pair called with (older_id, newer_id)
-    assert conn.calls[1]["params"] == (1, 2)
+    # get_findings_for_filing_pair called with (older_id, newer_id, older_id, newer_id)
+    assert conn.calls[1]["params"] == (1, 2, 1, 2)
 
 
 def test_get_report_returns_none_when_fewer_than_two_filings():

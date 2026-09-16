@@ -128,9 +128,25 @@ def insert_findings(
 def get_findings_for_filing_pair(
     conn: psycopg.Connection, older_filing_id: int, newer_filing_id: int
 ) -> list[dict]:
+    """Returns only the most recent pipeline run's findings for this filing
+    pair, not the full history. insert_findings is deliberately append-only
+    (see its docstring) so every run's findings stay in Postgres as an audit
+    trail, but a live API/MCP consumer wants current results, not every
+    findings row from every historical rerun of the pipeline stacked
+    together. "Most recent run" = every finding within 10 seconds of the
+    latest created_at for this pair -- one run's insert_findings call is a
+    single batch INSERT, so a real run's rows land within microseconds of
+    each other (confirmed empirically against live data), while separate
+    runs are reliably minutes apart.
+    """
     return conn.execute(
-        """SELECT * FROM findings
-           WHERE older_filing_id = %s AND newer_filing_id = %s
-           ORDER BY id""",
-        (older_filing_id, newer_filing_id),
+        """WITH latest AS (
+               SELECT MAX(created_at) AS max_created_at FROM findings
+               WHERE older_filing_id = %s AND newer_filing_id = %s
+           )
+           SELECT f.* FROM findings f, latest
+           WHERE f.older_filing_id = %s AND f.newer_filing_id = %s
+             AND f.created_at >= latest.max_created_at - INTERVAL '10 seconds'
+           ORDER BY f.id""",
+        (older_filing_id, newer_filing_id, older_filing_id, newer_filing_id),
     ).fetchall()

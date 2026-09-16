@@ -186,4 +186,4 @@ def test_get_findings_for_filing_pair_returns_query_result():
     result = get_findings_for_filing_pair(conn, older_filing_id=1, newer_filing_id=2)
 
     assert result == rows
-    assert conn.calls[0]["params"] == (1, 2)
+    assert conn.calls[0]["params"] == (1, 2, 1, 2)
