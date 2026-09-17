@@ -1,13 +1,27 @@
+from __future__ import annotations
+
 import os
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import psycopg
 from psycopg.rows import dict_row
 
-from ..agents.verifier import VerifiedFinding
-from ..connectors.base import FilingMetadata
-from ..connectors.section_parser import TaggedSection
 from .schema import SCHEMA_DDL
+
+if TYPE_CHECKING:
+    # Pipeline-only types, needed here only for annotations on
+    # pipeline-only functions (insert_findings, upsert_filing,
+    # insert_sections). Importing them eagerly at module load pulls in
+    # openai/beautifulsoup4/etc., which aren't installed in the deployed
+    # API's Lambda (see pyproject.toml's "pipeline" dependency group) --
+    # this file is also imported by the read-only API/MCP layer, so an
+    # eager import here broke the Lambda at cold start with
+    # ModuleNotFoundError: No module named 'openai', confirmed live via
+    # CloudWatch logs.
+    from ..agents.verifier import VerifiedFinding
+    from ..connectors.base import FilingMetadata
+    from ..connectors.section_parser import TaggedSection
 
 
 def _require_database_url_from_env() -> str:
