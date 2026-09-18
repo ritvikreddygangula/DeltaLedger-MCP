@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>materiality-engine</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e6e8ec;
+    --muted: #9aa1ac;
+    --accent: #6ea8ff;
+    --high: #ff6b6b;
+    --medium: #ffb84d;
+    --low: #8fd67a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.5;
+  }
+  header {
+    padding: 24px 32px;
+    border-bottom: 1px solid var(--border);
+  }
+  header h1 {
+    margin: 0 0 4px 0;
+    font-size: 20px;
+  }
+  header p {
+    margin: 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  main {
+    max-width: 900px;
+    margin: 0 auto;
+    padding: 24px 32px 64px;
+  }
+  .controls {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  select {
+    background: var(--panel);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 14px;
+    min-width: 160px;
+  }
+  .status {
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .filings {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 16px;
+    margin-bottom: 24px;
+  }
+  .filing-card {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+  }
+  .filing-card .label {
+    color: var(--muted);
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    margin-bottom: 6px;
+  }
+  .filing-card a {
+    color: var(--accent);
+    text-decoration: none;
+    font-size: 13px;
+    word-break: break-all;
+  }
+  .finding {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 16px;
+    margin-bottom: 12px;
+  }
+  .finding-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    flex-wrap: wrap;
+  }
+  .tier {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    padding: 2px 8px;
+    border-radius: 4px;
+  }
+  .tier.high { background: rgba(255,107,107,0.15); color: var(--high); }
+  .tier.medium { background: rgba(255,184,77,0.15); color: var(--medium); }
+  .tier.low { background: rgba(143,214,122,0.15); color: var(--low); }
+  .item-key {
+    color: var(--muted);
+    font-size: 13px;
+  }
+  .category {
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .confidence {
+    margin-left: auto;
+    font-size: 12px;
+    color: var(--muted);
+  }
+  .reasoning {
+    font-size: 14px;
+    margin-bottom: 10px;
+  }
+  details {
+    font-size: 13px;
+    color: var(--muted);
+  }
+  details summary {
+    cursor: pointer;
+    color: var(--accent);
+    margin-bottom: 6px;
+  }
+  .excerpt {
+    background: #0d0f13;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    margin-bottom: 8px;
+    white-space: pre-wrap;
+  }
+  .excerpt .which {
+    color: var(--muted);
+    font-size: 11px;
+    text-transform: uppercase;
+    margin-bottom: 4px;
+  }
+  .empty, .error {
+    color: var(--muted);
+    padding: 40px 0;
+    text-align: center;
+  }
+  .error { color: var(--high); }
+</style>
+</head>
+<body>
+<header>
+  <h1>materiality-engine</h1>
+  <p>Material changes between a company's two most recent 10-K filings, with source citations and confidence scores.</p>
+</header>
+<main>
+  <div class="controls">
+    <select id="ticker-select" disabled>
+      <option>Loading tickers...</option>
+    </select>
+    <span class="status" id="status"></span>
+  </div>
+  <div id="content"></div>
+</main>
+
+<script>
+  // Hardcoded on purpose: this is a single-environment personal project with
+  // no build step, not a multi-environment deployment -- see PROGRESS.md,
+  // Part 7. Update this if the API stack is ever redeployed under a new URL.
+  const API_BASE = "https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/api";
+
+  const selectEl = document.getElementById("ticker-select");
+  const statusEl = document.getElementById("status");
+  const contentEl = document.getElementById("content");
+
+  function tierClass(tier) {
+    const t = (tier || "").toLowerCase();
+    return ["high", "medium", "low"].includes(t) ? t : "low";
+  }
+
+  function escapeHtml(s) {
+    const div = document.createElement("div");
+    div.textContent = s == null ? "" : String(s);
+    return div.innerHTML;
+  }
+
+  function renderFiling(label, filing) {
+    return `
+      <div class="filing-card">
+        <div class="label">${label}</div>
+        <div>${escapeHtml(filing.form_type)} filed ${escapeHtml(filing.filing_date)}</div>
+        <div style="margin-top:6px;"><a href="${escapeHtml(filing.source_url)}" target="_blank" rel="noopener">${escapeHtml(filing.accession_number)}</a></div>
+      </div>
+    `;
+  }
+
+  function renderFinding(f) {
+    const confidencePct = f.confidence != null ? Math.round(f.confidence * 100) + "%" : "n/a";
+    return `
+      <div class="finding">
+        <div class="finding-header">
+          <span class="tier ${tierClass(f.final_tier || f.tier)}">${escapeHtml(f.final_tier || f.tier)}</span>
+          <span class="item-key">Item ${escapeHtml(f.item_key)}</span>
+          <span class="category">${escapeHtml(f.category)}</span>
+          <span class="confidence">confidence ${confidencePct}</span>
+        </div>
+        <div class="reasoning">${escapeHtml(f.reasoning)}</div>
+        <details>
+          <summary>Source excerpts &amp; verifier reasoning</summary>
+          ${f.older_excerpt ? `<div class="excerpt"><div class="which">Older filing</div>${escapeHtml(f.older_excerpt)}</div>` : ""}
+          ${f.newer_excerpt ? `<div class="excerpt"><div class="which">Newer filing</div>${escapeHtml(f.newer_excerpt)}</div>` : ""}
+          ${f.verifier_reasoning ? `<div style="margin-top:8px;">${escapeHtml(f.verifier_reasoning)}</div>` : ""}
+        </details>
+      </div>
+    `;
+  }
+
+  function renderReport(report) {
+    if (report.findings.length === 0) {
+      contentEl.innerHTML = `<div class="empty">No material findings between these two filings.</div>`;
+      return;
+    }
+    const filingsHtml = `
+      <div class="filings">
+        ${renderFiling("Older filing", report.older_filing)}
+        ${renderFiling("Newer filing", report.newer_filing)}
+      </div>
+    `;
+    const findingsHtml = report.findings.map(renderFinding).join("");
+    contentEl.innerHTML = filingsHtml + findingsHtml;
+  }
+
+  async function loadReport(ticker) {
+    statusEl.textContent = "Loading report...";
+    contentEl.innerHTML = "";
+    try {
+      const res = await fetch(`${API_BASE}/reports/${encodeURIComponent(ticker)}`);
+      if (!res.ok) {
+        throw new Error(`API returned ${res.status}`);
+      }
+      const report = await res.json();
+      statusEl.textContent = "";
+      renderReport(report);
+    } catch (err) {
+      statusEl.textContent = "";
+      contentEl.innerHTML = `<div class="error">Failed to load report: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  async function init() {
+    try {
+      const res = await fetch(`${API_BASE}/tickers`);
+      if (!res.ok) {
+        throw new Error(`API returned ${res.status}`);
+      }
+      const tickers = await res.json();
+      selectEl.innerHTML = tickers.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("");
+      selectEl.disabled = false;
+      selectEl.addEventListener("change", () => loadReport(selectEl.value));
+      if (tickers.length > 0) {
+        loadReport(tickers[0]);
+      }
+    } catch (err) {
+      selectEl.innerHTML = `<option>Failed to load</option>`;
+      contentEl.innerHTML = `<div class="error">Failed to load tickers: ${escapeHtml(err.message)}</div>`;
+    }
+  }
+
+  init();
+</script>
+</body>
+</html>

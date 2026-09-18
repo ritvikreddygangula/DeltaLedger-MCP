@@ -37,3 +37,28 @@ uv run python -m scripts.run_pipeline AAPL
 ```
 
 For a ticker already ingested via the command above, runs the full Aligner + Materiality Classifier + Verifier pipeline: prints every section as MATCHED (with a similarity score), REMOVED, or NEW, then every finding with both the classifier's original claim and the verifier's independent re-check — a confidence score, whether the cited excerpt was actually found verbatim in the source text, and the verifier's own tier assessment (shown alongside the original if it was downgraded or upgraded). Every finding is then persisted to Postgres as a permanent audit record. Requires `DATABASE_URL` and `OPENAI_API_KEY`. Makes real, billed OpenAI chat calls (a few cents per run).
+
+## Live deployment (Part 7)
+
+A read-only API and MCP server, deployed to AWS Lambda behind API Gateway, serving already-cached findings for the curated set of ingested tickers. Nothing here triggers a live pipeline run from a public request — expanding the curated set stays a manual action, via the two scripts above.
+
+**REST API** — `https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com`
+
+```
+GET /api/tickers                # the curated set, e.g. ["AAPL","LYV","MGM","NKE","PG","SBUX"]
+GET /api/reports/{ticker}       # both filings + every finding for that pair
+GET /api/findings/{finding_id}  # a single finding's full detail
+```
+
+**MCP server** — same backend, same three operations, exposed as tools (`list_tickers`, `get_materiality_report`, `get_finding_citation`) at `https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/mcp` via the Streamable HTTP transport. Point any MCP client at that URL directly.
+
+**Frontend** — `https://d30z0su1b3sesp.cloudfront.net`
+
+A minimal static page: pick a curated ticker, see every finding with its tier, category, reasoning, confidence, and source excerpts from both filings.
+
+**Redeploying:**
+
+```bash
+./scripts/deploy.sh                                   # API + MCP server (Lambda via SAM)
+./scripts/deploy_frontend.sh <bucket> <distribution-id>  # static frontend (S3 + CloudFront)
+```

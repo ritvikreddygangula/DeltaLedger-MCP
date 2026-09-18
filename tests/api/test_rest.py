@@ -47,6 +47,19 @@ def test_read_tickers_returns_list():
     app.dependency_overrides.clear()
 
 
+def test_cors_header_present_for_cross_origin_frontend():
+    # The frontend (S3 + CloudFront) is a different origin than this API
+    # (API Gateway), so a real browser fetch() needs this header or it gets
+    # silently blocked client-side regardless of the response body.
+    app.dependency_overrides[_get_conn] = _override_conn([[{"ticker": "AAPL"}]])
+    client = TestClient(app)
+
+    response = client.get("/tickers", headers={"Origin": "https://example.cloudfront.net"})
+
+    assert response.headers.get("access-control-allow-origin") == "*"
+    app.dependency_overrides.clear()
+
+
 def test_read_report_returns_404_when_not_found():
     app.dependency_overrides[_get_conn] = _override_conn([[{"id": 1}]])  # only 1 filing
     client = TestClient(app)
