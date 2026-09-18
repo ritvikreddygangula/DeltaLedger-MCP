@@ -5,6 +5,7 @@ from src.connectors.section_parser import TaggedSection
 from src.storage.db import (
     get_filing_sections,
     get_filings_for_ticker,
+    get_findings_for_filing_pair,
     insert_findings,
     insert_sections,
     upsert_filing,
@@ -176,3 +177,13 @@ def test_insert_findings_never_issues_delete():
     )
 
     assert not any("DELETE" in call["query"] for call in conn.calls)
+
+
+def test_get_findings_for_filing_pair_returns_query_result():
+    rows = [{"id": 1, "item_key": "1A", "category": "substantive_change"}]
+    conn = _StubConnection(results=[rows])
+
+    result = get_findings_for_filing_pair(conn, older_filing_id=1, newer_filing_id=2)
+
+    assert result == rows
+    assert conn.calls[0]["params"] == (1, 2, 1, 2)

@@ -1,0 +1,52 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  materiality-engine -- read-only REST API + MCP server serving cached
+  materiality findings for curated tickers. No pipeline, no job queue: every
+  request is a Postgres read against results the CLI scripts already
+  computed and stored (see PROGRESS.md, Part 7).
+
+Parameters:
+  DatabaseUrl:
+    Type: String
+    NoEcho: true
+    Description: >
+      Postgres connection string for the RDS instance, including
+      sslmode=require, e.g.
+      postgresql://user:pass@host:5432/materiality?sslmode=require
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures:
+      - x86_64
+    Timeout: 30
+    MemorySize: 512
+
+Resources:
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Metadata:
+      # The Makefile lives at the repo root (CodeUri) per SAM's convention
+      # for BuildMethod: makefile. It installs infra/requirements.txt --
+      # deliberately API-only deps, not the full pipeline dependency group
+      # -- and copies in src/. psycopg[binary] ships a compiled C extension,
+      # but pip can fetch a prebuilt manylinux wheel for Lambda's runtime
+      # directly (see Makefile), so no Docker/--use-container is needed.
+      BuildMethod: makefile
+    Properties:
+      CodeUri: ../
+      Handler: src.api.lambda_handler.handler
+      Environment:
+        Variables:
+          DATABASE_URL: !Ref DatabaseUrl
+      Events:
+        AnyRequest:
+          Type: HttpApi
+
+Outputs:
+  ApiUrl:
+    Description: >
+      Base URL of the deployed HTTP API. REST routes are under /api/... ,
+      the MCP endpoint is at /mcp.
+    Value: !Sub "https://${ServerlessHttpApi}.execute-api.${AWS::Region}.amazonaws.com"

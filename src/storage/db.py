@@ -1,13 +1,27 @@
+from __future__ import annotations
+
 import os
 from datetime import datetime, timezone
+from typing import TYPE_CHECKING
 
 import psycopg
 from psycopg.rows import dict_row
 
-from ..agents.verifier import VerifiedFinding
-from ..connectors.base import FilingMetadata
-from ..connectors.section_parser import TaggedSection
 from .schema import SCHEMA_DDL
+
+if TYPE_CHECKING:
+    # Pipeline-only types, needed here only for annotations on
+    # pipeline-only functions (insert_findings, upsert_filing,
+    # insert_sections). Importing them eagerly at module load pulls in
+    # openai/beautifulsoup4/etc., which aren't installed in the deployed
+    # API's Lambda (see pyproject.toml's "pipeline" dependency group) --
+    # this file is also imported by the read-only API/MCP layer, so an
+    # eager import here broke the Lambda at cold start with
+    # ModuleNotFoundError: No module named 'openai', confirmed live via
+    # CloudWatch logs.
+    from ..agents.verifier import VerifiedFinding
+    from ..connectors.base import FilingMetadata
+    from ..connectors.section_parser import TaggedSection
 
 
 def _require_database_url_from_env() -> str:
@@ -123,3 +137,30 @@ def insert_findings(
             ],
         )
     conn.commit()
+
+
+def get_findings_for_filing_pair(
+    conn: psycopg.Connection, older_filing_id: int, newer_filing_id: int
+) -> list[dict]:
+    """Returns only the most recent pipeline run's findings for this filing
+    pair, not the full history. insert_findings is deliberately append-only
+    (see its docstring) so every run's findings stay in Postgres as an audit
+    trail, but a live API/MCP consumer wants current results, not every
+    findings row from every historical rerun of the pipeline stacked
+    together. "Most recent run" = every finding within 10 seconds of the
+    latest created_at for this pair -- one run's insert_findings call is a
+    single batch INSERT, so a real run's rows land within microseconds of
+    each other (confirmed empirically against live data), while separate
+    runs are reliably minutes apart.
+    """
+    return conn.execute(
+        """WITH latest AS (
+               SELECT MAX(created_at) AS max_created_at FROM findings
+               WHERE older_filing_id = %s AND newer_filing_id = %s
+           )
+           SELECT f.* FROM findings f, latest
+           WHERE f.older_filing_id = %s AND f.newer_filing_id = %s
+             AND f.created_at >= latest.max_created_at - INTERVAL '10 seconds'
+           ORDER BY f.id""",
+        (older_filing_id, newer_filing_id, older_filing_id, newer_filing_id),
+    ).fetchall()
