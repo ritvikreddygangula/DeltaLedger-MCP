@@ -20,7 +20,7 @@ uv run pytest
 
 ## Configuration
 
-Copy `.env.example` to `.env` and fill in the required values (see the file for what each one is used for and which build Part introduces it).
+Copy `.env.example` to `.env` and fill in the required values (see the file for what each one is used for).
 
 ## Ingesting a company's filings
 
@@ -50,7 +50,11 @@ GET /api/reports/{ticker}       # both filings + every finding for that pair
 GET /api/findings/{finding_id}  # a single finding's full detail
 ```
 
-**MCP server** — same backend, same three operations, exposed as tools (`list_tickers`, `get_materiality_report`, `get_finding_citation`) at `https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/mcp` via the Streamable HTTP transport. Point any MCP client at that URL directly.
+**MCP server** — same backend, same three operations, exposed as tools (`list_tickers`, `get_materiality_report`, `get_finding_citation`) at `https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/mcp` via the Streamable HTTP transport. Point any MCP client at that URL directly, or add it to Claude Code in one command:
+
+```bash
+claude mcp add --transport http materiality-engine https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/mcp
+```
 
 **Frontend** — `https://d30z0su1b3sesp.cloudfront.net`
 
