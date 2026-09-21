@@ -315,6 +315,105 @@ def test_classified_pairs_correlates_finding_to_correct_alignment_when_item_keys
         assert findings[0].reasoning == f"from {alignment.older_section['body_text']}"
 
 
+class _StubCacheResult:
+    def __init__(self, value):
+        self._value = value
+
+    def fetchone(self):
+        return self._value
+
+
+class _StubCacheConnection:
+    """Minimal in-memory llm_cache -- enough to prove a second identical
+    call is a hit, without a real Postgres connection."""
+
+    def __init__(self):
+        self.store: dict[str, str] = {}
+
+    def execute(self, query, params=None):
+        if query.startswith("SELECT"):
+            cache_key = params[0]
+            row = self.store.get(cache_key)
+            return _StubCacheResult({"output_json": row} if row is not None else None)
+        cache_key, _kind, output_json = params[0], params[1], params[2]
+        self.store.setdefault(cache_key, output_json)
+        return _StubCacheResult(None)
+
+    def commit(self):
+        pass
+
+
+def test_classify_result_is_cached_and_reused_on_identical_input():
+    def fake_embed(texts):
+        return [[1.0, 0.0] for _ in texts]
+
+    classify_calls = []
+
+    def fake_classify(alignment):
+        classify_calls.append(alignment)
+        return [
+            Finding(item_key="1A", category="other", tier="low", reasoning="stub",
+                    older_excerpt=None, newer_excerpt=None)
+        ]
+
+    conn = _StubCacheConnection()
+    state = {"older_sections": [_section("1A", "x")], "newer_sections": [_section("1A", "y")]}
+    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify, verify_fn=_no_op_verify, cache_conn=conn)
+
+    graph.invoke(state)
+    graph.invoke(state)
+
+    assert len(classify_calls) == 1
+
+
+def test_verify_result_is_cached_and_reused_on_identical_input():
+    def fake_embed(texts):
+        return [[1.0, 0.0] for _ in texts]
+
+    def fake_classify(alignment):
+        return [
+            Finding(item_key="1A", category="other", tier="high", reasoning="stub",
+                    older_excerpt=None, newer_excerpt=None)
+        ]
+
+    verify_calls = []
+
+    def fake_verify(findings, alignment):
+        verify_calls.append(findings)
+        return _no_op_verify(findings, alignment)
+
+    conn = _StubCacheConnection()
+    state = {"older_sections": [_section("1A", "x")], "newer_sections": [_section("1A", "y")]}
+    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify, verify_fn=fake_verify, cache_conn=conn)
+
+    graph.invoke(state)
+    graph.invoke(state)
+
+    assert len(verify_calls) == 1
+
+
+def test_no_cache_conn_means_no_caching_and_no_behavior_change():
+    # Backward-compatibility guard for every pre-existing caller
+    # (scripts/run_pipeline.py, src/eval/run_eval.py) that never passes
+    # cache_conn.
+    def fake_embed(texts):
+        return [[1.0, 0.0] for _ in texts]
+
+    classify_calls = []
+
+    def fake_classify(alignment):
+        classify_calls.append(alignment)
+        return []
+
+    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify, verify_fn=_no_op_verify)
+    state = {"older_sections": [_section("1A", "x")], "newer_sections": [_section("1A", "y")]}
+
+    graph.invoke(state)
+    graph.invoke(state)
+
+    assert len(classify_calls) == 2  # no caching without a conn -- every call goes through
+
+
 def test_graph_never_imports_real_openai_client_for_verify_either():
     def fake_embed(texts: list[str]) -> list[list[float]]:
         return [[1.0, 0.0] for _ in texts]

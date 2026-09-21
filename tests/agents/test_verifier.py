@@ -290,6 +290,22 @@ def test_batch_prompt_includes_every_claim():
     assert "accounting_policy_change" in user_prompt
 
 
+def test_verify_prompt_only_includes_changed_regions_for_matched_alignment():
+    shared = "\n".join(f"line {i}" for i in range(20))
+    older_text = f"{shared}\nold specific detail\n{shared}"
+    newer_text = f"{shared}\nnew specific detail\n{shared}"
+    alignment = _matched_alignment(older_text=older_text, newer_text=newer_text)
+    finding = _finding(older_excerpt="old specific detail", newer_excerpt="new specific detail")
+    client = _StubOpenAIClient([{"confidence": 0.9, "final_tier": "high", "reasoning": "r"}])
+
+    verify_findings_for_alignment([finding], alignment, client=client)
+
+    user_prompt = client.responses.calls[0]["input"][1]["content"]
+    assert "old specific detail" in user_prompt
+    assert "new specific detail" in user_prompt
+    assert len(user_prompt) < len(older_text) + len(newer_text)
+
+
 def test_prompt_version_recorded_on_result():
     client = _StubOpenAIClient(
         [{"confidence": 0.5, "final_tier": "low", "reasoning": "r"}]

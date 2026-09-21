@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 from . import classifier
 from ._llm_utils import call_responses_parse
 from .aligner import SectionAlignment
+from .diffing import diff_sections
 from .classifier import Finding, MaterialityTier
 
 DEFAULT_CHAT_MODEL = "gpt-5.4-mini"
@@ -106,9 +107,17 @@ def _build_batch_user_prompt(findings: list[Finding], alignment: SectionAlignmen
     )
 
     blocks = []
-    if older is not None:
+    if older is not None and newer is not None:
+        # Same diff the classifier saw, recomputed fresh (diff_sections is
+        # pure, so this always agrees with it) -- verify no longer pays
+        # full-section-text cost a second time for text classify already
+        # sent.
+        older_text, newer_text = diff_sections(older["body_text"], newer["body_text"])
+        blocks.append(f"=== OLDER FILING TEXT (changed regions only) ===\n{older_text}")
+        blocks.append(f"=== NEWER FILING TEXT (changed regions only) ===\n{newer_text}")
+    elif older is not None:
         blocks.append(f"=== OLDER FILING TEXT ===\n{older['body_text']}")
-    if newer is not None:
+    elif newer is not None:
         blocks.append(f"=== NEWER FILING TEXT ===\n{newer['body_text']}")
 
     return (

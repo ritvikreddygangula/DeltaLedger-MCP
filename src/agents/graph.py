@@ -1,9 +1,14 @@
+import dataclasses
+import json
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
+import psycopg
 from langgraph.graph import END, START, StateGraph
 
 from ..embeddings.openai_client import get_embeddings
+from ..storage import llm_cache
+from . import classifier, verifier
 from .aligner import DEFAULT_MATCH_THRESHOLD, SectionAlignment, align_sections
 from .classifier import Finding, classify_alignment
 from .state import PipelineState
@@ -98,12 +103,83 @@ def _make_verify_node(verify_fn: VerifyFn):
     return verify_node
 
 
+def _classify_cache_key(alignment: SectionAlignment) -> str:
+    older = alignment.older_section
+    newer = alignment.newer_section
+    return llm_cache.compute_cache_key(
+        kind="classify",
+        status=alignment.status,
+        older_text=older["body_text"] if older else None,
+        newer_text=newer["body_text"] if newer else None,
+        model=classifier.DEFAULT_CHAT_MODEL,
+        prompt_version=classifier.PROMPT_VERSION,
+        reasoning_effort=classifier.DEFAULT_REASONING_EFFORT,
+    )
+
+
+def _cached_classify(classify_fn: ClassifyFn, conn: psycopg.Connection) -> ClassifyFn:
+    def wrapped(alignment: SectionAlignment) -> list[Finding]:
+        key = _classify_cache_key(alignment)
+        cached = llm_cache.get_cached(conn, key)
+        if cached is not None:
+            return [Finding(**d) for d in json.loads(cached)]
+        findings = classify_fn(alignment)
+        llm_cache.set_cached(
+            conn, key, "classify",
+            json.dumps([dataclasses.asdict(f) for f in findings]),
+            classifier.DEFAULT_CHAT_MODEL, classifier.PROMPT_VERSION,
+        )
+        return findings
+
+    return wrapped
+
+
+def _verify_cache_key(findings: list[Finding], alignment: SectionAlignment) -> str:
+    older = alignment.older_section
+    newer = alignment.newer_section
+    return llm_cache.compute_cache_key(
+        kind="verify",
+        status=alignment.status,
+        older_text=older["body_text"] if older else None,
+        newer_text=newer["body_text"] if newer else None,
+        claims=[dataclasses.asdict(f) for f in findings],
+        model=verifier.DEFAULT_CHAT_MODEL,
+        prompt_version=verifier.PROMPT_VERSION,
+        reasoning_effort=verifier.DEFAULT_REASONING_EFFORT,
+    )
+
+
+def _verified_finding_from_dict(d: dict) -> VerifiedFinding:
+    return VerifiedFinding(**{**d, "finding": Finding(**d["finding"])})
+
+
+def _cached_verify(verify_fn: VerifyFn, conn: psycopg.Connection) -> VerifyFn:
+    def wrapped(findings: list[Finding], alignment: SectionAlignment) -> list[VerifiedFinding]:
+        key = _verify_cache_key(findings, alignment)
+        cached = llm_cache.get_cached(conn, key)
+        if cached is not None:
+            return [_verified_finding_from_dict(d) for d in json.loads(cached)]
+        verified = verify_fn(findings, alignment)
+        llm_cache.set_cached(
+            conn, key, "verify",
+            json.dumps([dataclasses.asdict(vf) for vf in verified]),
+            verifier.DEFAULT_CHAT_MODEL, verifier.PROMPT_VERSION,
+        )
+        return verified
+
+    return wrapped
+
+
 def build_graph(
     embed_fn: EmbedFn = get_embeddings,
     classify_fn: ClassifyFn = classify_alignment,
     verify_fn: VerifyFn = verify_findings_for_alignment,
     threshold: float = DEFAULT_MATCH_THRESHOLD,
+    cache_conn: psycopg.Connection | None = None,
 ):
+    if cache_conn is not None:
+        classify_fn = _cached_classify(classify_fn, cache_conn)
+        verify_fn = _cached_verify(verify_fn, cache_conn)
     builder = StateGraph(PipelineState)
     builder.add_node("align", _make_align_node(embed_fn, threshold))
     builder.add_node("classify", _make_classify_node(classify_fn))
