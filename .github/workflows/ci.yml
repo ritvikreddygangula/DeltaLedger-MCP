@@ -27,6 +27,12 @@ jobs:
   eval:
     runs-on: ubuntu-latest
     needs: test
+    # Only on PRs, not on push-to-main -- a push to main is always an
+    # already-merged PR's commit that this same job already ran (and
+    # billed) minutes earlier during review. Re-running it again on push
+    # tests the identical code against the identical golden set for zero
+    # new information, at full OpenAI cost, on every single merge.
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
 
