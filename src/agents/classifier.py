@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from ._llm_utils import call_responses_parse
 from .aligner import SectionAlignment
+from .diffing import diff_sections
 
 FindingCategory = Literal[
     "new_risk_factor",
@@ -72,15 +73,18 @@ def _build_user_prompt(alignment: SectionAlignment) -> str:
     heading_text = (older or newer)["heading_text"]
 
     if alignment.status == "matched":
+        older_text, newer_text = diff_sections(older["body_text"], newer["body_text"])
         return (
             f"SECTION: Item {item_key} -- {heading_text}\n"
             f"ALIGNMENT: matched between an older and newer filing "
             f"(embedding similarity {alignment.similarity:.4f}).\n"
-            "Compare the two versions below; report only substantive differences.\n\n"
-            "=== OLDER FILING TEXT ===\n"
-            f"{older['body_text']}\n\n"
-            "=== NEWER FILING TEXT ===\n"
-            f"{newer['body_text']}"
+            "Compare the two versions below; report only substantive differences. "
+            "Unchanged surrounding text has been omitted for length -- a gap "
+            "does not itself indicate a change, only the lines shown do.\n\n"
+            "=== OLDER FILING TEXT (changed regions only) ===\n"
+            f"{older_text}\n\n"
+            "=== NEWER FILING TEXT (changed regions only) ===\n"
+            f"{newer_text}"
         )
     if alignment.status == "removed":
         return (

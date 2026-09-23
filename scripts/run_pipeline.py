@@ -40,7 +40,7 @@ def main(ticker: str) -> None:
     older_sections = get_filing_sections(conn, older["id"])
     newer_sections = get_filing_sections(conn, newer["id"])
 
-    graph = build_graph()
+    graph = build_graph(cache_conn=conn)
     result = graph.invoke(
         {"older_sections": older_sections, "newer_sections": newer_sections}
     )

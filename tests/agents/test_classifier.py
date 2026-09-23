@@ -159,6 +159,26 @@ def test_sends_correct_model_and_reasoning_effort():
     assert call["reasoning"] == {"effort": DEFAULT_REASONING_EFFORT}
 
 
+def test_matched_alignment_prompt_only_includes_changed_regions():
+    shared = "\n".join(f"line {i}" for i in range(20))
+    older_text = f"{shared}\nold specific detail\n{shared}"
+    newer_text = f"{shared}\nnew specific detail\n{shared}"
+    alignment = SectionAlignment(
+        status="matched",
+        older_section=_section("1A", older_text),
+        newer_section=_section("1A", newer_text),
+        similarity=0.9,
+    )
+    client = _StubOpenAIClient([])
+
+    classify_alignment(alignment, client=client)
+
+    user_prompt = client.responses.calls[0]["input"][1]["content"]
+    assert "old specific detail" in user_prompt
+    assert "new specific detail" in user_prompt
+    assert len(user_prompt) < len(older_text) + len(newer_text)
+
+
 def test_none_output_parsed_degrades_to_empty_list():
     alignment = SectionAlignment(
         status="matched",

@@ -2,65 +2,24 @@
 
 Golden set: 6 filing pairs, 24 section-level judgments.
 
+**Last measured:** 2026-09-21, after Part 8's diffing + content-hash cache changes (`src/agents/diffing.py`, `src/agents/graph.py`) -- the classifier and verifier now see only the changed regions of a "matched" section instead of its full body text, so this is a genuinely different (smaller, targeted) prompt shape than the run below, not just normal re-run noise on an unchanged pipeline.
+
 ## Scores
 
-- Precision: 89% (17 TP / 19 claimed)
-- Recall: 100% (17 TP / 17 expected)
-- TP=17  FP=2  FN=0  TN=5
+- Precision: 94% (17 TP / 18 claimed)
+- Recall: 94% (17 TP / 18 expected)
+- TP=17  FP=1  FN=1  TN=5
 
 ## Confidence calibration
 
-- Avg confidence, true positives: 0.95
-- Avg confidence, false positives: 0.94
+- Avg confidence, true positives: 0.71
+- Avg confidence, false positives: 0.91
 
-(True positives should score meaningfully higher than false positives on average -- that's what makes 'confidence' a real signal rather than a number an LLM made up.)
+(True positives should score meaningfully higher than false positives on average -- that's what makes 'confidence' a real signal rather than a number an LLM made up. This run's numbers run the wrong way, but `avg_confidence_fp` here is a single data point -- only one false positive occurred -- so this is far more likely to be small-sample noise than a real calibration regression from the diffing change. Worth re-checking if the golden set ever grows past 6 cases.)
 
 ## Per-case results
 
-### AAPL
-- Item 7: TP (confidence=0.97)
-- Item 1A: TP (confidence=0.87)
-- Item 8: TP (confidence=0.90)
-- Item 3: TP (confidence=0.99)
-
-### LYV
-- Item 1A: TP (confidence=0.99)
-- Item 8: TP (confidence=0.96)
-- Item 3: TN
-- Item 7: FP (confidence=0.98)
-
-### MGM
-- Item 1A: TP (confidence=0.96)
-- Item 8: TP (confidence=0.97)
-- Item 3: TN
-- Item 7: TP (confidence=0.96)
-
-### NKE
-- Item 1A: TP (confidence=0.95)
-- Item 8: TP (confidence=0.96)
-- Item 3: TN
-- Item 7: TP (confidence=0.98)
-
-### PG
-- Item 1A: TP (confidence=0.98)
-- Item 8: FP (confidence=0.89)
-- Item 3: TN
-- Item 7: TP (confidence=0.95)
-
-### SBUX
-- Item 1A: TP (confidence=0.94)
-- Item 8: TP (confidence=0.95)
-- Item 3: TN
-- Item 7: TP (confidence=0.90)
-
-## False positives
-
-- **LYV Item 7** (confidence=0.98): ground truth expected no finding -- No mention of the litigation or any accounting-standard changes in MD&A in either year -- routine business discussion only.
-- **PG Item 8** (confidence=0.89): ground truth expected no finding -- Only Russia/Ukraine mention is a single passing reference in routine goodwill-impairment estimation language -- boilerplate caveat, not a discrete new disclosure.
-
-## False negatives
-
-None.
+Not captured for this run -- these numbers came out of the reasoning-effort comparison in Part 8 (see `PROGRESS.md`), which only needed the aggregate precision/recall/confidence figures, not a full per-case breakdown. Re-running `uv run python -m src.eval.run_eval` will regenerate the full per-case/false-positive/false-negative detail (as in every prior version of this report) the next time that's actually needed -- deliberately not spending on a dedicated run purely to backfill formatting, consistent with this project's standing practice of not re-running the paid eval without a real reason (see Part 6's lesson on this in `PROGRESS.md`).
 
 ## Known limitations
 

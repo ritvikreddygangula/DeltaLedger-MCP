@@ -45,4 +45,14 @@ CREATE TABLE IF NOT EXISTS findings (
 
 CREATE INDEX IF NOT EXISTS idx_findings_older_filing_id ON findings(older_filing_id);
 CREATE INDEX IF NOT EXISTS idx_findings_newer_filing_id ON findings(newer_filing_id);
+
+CREATE TABLE IF NOT EXISTS llm_cache (
+    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+    cache_key TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL,
+    output_json TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL
+);
 """

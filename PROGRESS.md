@@ -246,6 +246,46 @@ All five were corrected in the golden-set fixtures. Only one flagged disagreemen
 - [x] Rosetta 2 installed to fix a broken `aws` CLI (environment issue, not app code)
 - [x] Live frontend verified at **https://d30z0su1b3sesp.cloudfront.net**, including the real cross-origin API calls it makes
 
-**Current sub-step:** 13 of 14 complete. Remaining: closing bookkeeping (README API/MCP usage section).
+**Current sub-step:** none -- Part 7 complete, merged to `main`. (README's API/MCP usage section, listed as the one remaining item above, was added in a later cleanup pass.)
 
 **Open decisions / blockers:** none. Live URLs for this Part: API at `https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com` (`/api/...` for REST, `/mcp` for the MCP server), frontend at `https://d30z0su1b3sesp.cloudfront.net`.
+
+## Part 8 -- Pipeline Cost Reduction (branch `part8-pipeline-cost-reduction`)
+
+**What prompted this Part:** the curated-ticker list looked like a static demo (~30 hardcoded tickers) rather than a live tool, which raised the obvious follow-up -- what would it actually cost to open this up to a couple of real users hitting it through Claude via MCP? A full pipeline-cost audit found the answer was already `$0` per query for anything already cached (the read API is pure Postgres reads, exactly as designed in Part 7) -- the only real cost lives in the classify/verify LLM calls that run once per filing pair, and specifically: both calls send a "matched" section's **entire** body text (often 60K-140K+ characters per side), and verify pays that cost a **second time** for text classify already saw, at a higher reasoning effort on top of that.
+
+**A real scope correction, worth recording honestly.** The cost audit produced 6 candidate mitigations. Two of them -- a hard per-day budget guardrail and validating a ticker via EDGAR before spending anything -- only make sense if something lets an outside user actually trigger a *new*, billed pipeline run. Rather than flagging that dependency, the first pass at this Part silently assumed the answer was yes and drafted a full implementation plan for an entire on-demand-ingestion feature that was never actually requested: a second async Lambda, a job-status table, a spend-ledger table, a new MCP tool, and SAM/IAM/CloudWatch changes to support it. Called out directly and corrected before any of that code was written -- the plan document was deleted, and the two guardrail items were dropped entirely. The system stays exactly as Part 7 shipped it: read-only, serving only tickers already ingested via the existing manual CLI scripts. The lesson: a hypothetical framing in an analysis ("if I were to let users trigger this...") is not the same as a decision to build the thing being hypothesized about, and treating it as one wastes real implementation effort on an unconfirmed premise.
+
+**What actually shipped -- two independent, unconditional cost cuts to the pipeline itself, regardless of how it's ever triggered:**
+
+- **Local diff before either LLM call** (`src/agents/diffing.py`): a line-level diff (stdlib `difflib`, no new dependency) between a "matched" alignment's older and newer section text, keeping only changed lines plus 2 lines of surrounding context. Falls back to sending the full original text when there's nothing in common or the diff barely shrinks anything (e.g. genuinely unrelated sections), so it never produces a worse prompt than today's baseline. Section text is already one normalized line per original document line (`section_parser._flatten_and_normalize`), so line-level diffing lines up with real prose units for free.
+- **Verify stops resending the same text.** `verifier._build_batch_user_prompt` now recomputes the identical diff (pure function, always agrees with what classify saw) instead of sending the full section body a second time -- this alone removes one entire redundant full-text payload per alignment.
+- **Content-hash cache** (`src/storage/llm_cache.py`, new `llm_cache` table): `build_graph()` gained an optional `cache_conn` parameter -- when passed, classify/verify results are cached by a hash of (section text, claims, model, prompt version, reasoning effort) and replayed on an identical rerun instead of re-billing OpenAI. Defaults to `None` (no caching, byte-identical old behavior), so every existing caller was unaffected except `scripts/run_pipeline.py`, which now passes its own `conn` and gets the caching benefit for real.
+- A critical invariant proven by a dedicated test, not just asserted: the verifier's Layer-1 hallucination check (`excerpts_verified`) substring-matches a cited excerpt against the **full, undiffed** `body_text` from Postgres -- never against whatever diffed text an LLM was actually shown -- so shrinking the prompt can never let a real hallucination slip past the free deterministic check.
+
+**Reasoning-effort measurement (item 3 of the original 6), decided empirically, no source change needed to test it:** `verify_findings_for_alignment` already exposed `reasoning_effort` as a keyword argument, so comparing `"medium"` (today's default) against `"low"` needed only a `functools.partial` injected via `build_graph(verify_fn=...)` from a throwaway script -- never touching `verifier.py`. Real golden-set results:
+
+| | precision | recall | TP/FP/FN/TN |
+|---|---|---|---|
+| medium (kept) | 94.4% | 94.4% | 17/1/1/5 |
+| low | 94.1% | 88.9% | 16/1/2/5 |
+
+Recall dropped a full 5.6 points at `"low"` -- one genuine finding that `"medium"` caught was missed. For a tool whose entire premise is *not missing material changes*, that's a worse trade than whatever marginal token savings `"low"` offers, especially since the diffing change above already cut verify's input size independent of the reasoning-effort setting. `DEFAULT_REASONING_EFFORT` stays `"medium"`, unchanged -- a negative result, kept for the record like every other empirical check in this project, not silently discarded. (The confidence-calibration columns from this same comparison are not a reliable signal either way -- only one false positive occurred in each run, so an "average" over a single data point is noise, not evidence.)
+
+The `"medium"` row above also happens to be this project's first real post-diffing eval measurement, and it holds up fine against the Part 6 baseline (94.4% recall now vs. 100% then, well within the run-to-run LLM-output variance `EVAL_REPORT.md` already documents as expected) -- evidence the diffing change didn't quietly degrade classifier/verifier quality while cutting its input size.
+
+- [x] Full pipeline cost audit (highest-cost step identified: verify's redundant full-text resend at a higher reasoning effort)
+- [x] Scope correction: on-demand-ingestion plan drafted, found to rest on an unconfirmed premise, deleted before implementation
+- [x] `src/agents/diffing.py` + tests
+- [x] Classifier wired to diff matched sections instead of full text; regression test proving the prompt actually shrinks
+- [x] Verifier wired to the same diff instead of resending full text; regression test proving the prompt actually shrinks
+- [x] `llm_cache` table + `src/storage/llm_cache.py` + tests
+- [x] `build_graph(cache_conn=...)` wired with cache-check/cache-write wrappers around classify/verify; `scripts/run_pipeline.py` updated to use it
+- [x] Reasoning-effort `"medium"` vs `"low"` measured live against the golden set; kept `"medium"`, decision and numbers recorded here
+- [x] `EVAL_REPORT.md` updated with real post-diffing numbers (aggregate only -- see the report's own note on why per-case detail wasn't regenerated)
+- [x] Full test suite green throughout (119 passing, up from 105 at the start of this Part)
+- [x] Bookkeeping (this update)
+
+**Current sub-step:** none -- Part 8 complete.
+
+**Open decisions / blockers:** none. Items 5 and 6 from the original cost-audit list (a per-day budget guardrail and EDGAR ticker validation before spend) remain deliberately unimplemented -- both only matter if a live trigger surface for new, user-initiated pipeline runs is ever actually built, which it was not.

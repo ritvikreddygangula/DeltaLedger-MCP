@@ -79,23 +79,100 @@ def _find_heading_candidates(full_text: str) -> list[_HeadingCandidate]:
     return candidates
 
 
-def _select_real_headings(
-    candidates: list[_HeadingCandidate], min_gap_chars: int = 400
+def _exclude_table_of_contents(
+    ordered: list[_HeadingCandidate], toc_max_gap: int, min_toc_items: int = 5
 ) -> list[_HeadingCandidate]:
-    """Disambiguate real section headings from table-of-contents entries.
+    """Identifies and drops the leading table-of-contents block as a whole,
+    rather than judging each candidate's own gap in isolation.
 
-    A ToC entry is followed almost immediately (within a few dozen chars) by
-    the next ToC entry. A real heading is followed by hundreds/thousands of
-    chars of body text before the next heading of ANY item. For each item_key,
-    take the last candidate whose gap to the next candidate (any item, in doc
-    order) is large, or that is simply the last candidate in the whole
-    document. If no candidate for an item_key qualifies, fall back to its
-    last occurrence anyway rather than silently dropping the section.
+    A real ToC lists every item exactly once, in order, each entry
+    separated from the next by a small gap -- so it shows up as a
+    contiguous run of DISTINCT item_keys near the start of the document.
+    Real body content, by contrast, either has just one occurrence of an
+    item_key or -- when a filer prints "Item 7" as a running page header on
+    every page of a long section (confirmed live on a real MSFT filing: 16
+    and 40 repeats for two different items) -- REPEATS the same item_key.
+    The block ends at the first repeat (real content started) or the first
+    large gap (we've moved past the ToC into real body text).
+
+    Judging ToC membership this way, rather than by each candidate's own
+    gap to its neighbor, matters because a single ToC entry can have an
+    anomalously large gap purely from that filer's own formatting quirks
+    (confirmed live on a real PG filing: the ToC's "Item 8" line had a
+    973-char gap to the next ToC entry, comfortably clearing a 400-char
+    per-candidate threshold, which caused an earlier version of this
+    function to select the ToC line itself as if it were the real,
+    116,000-character Financial Statements section).
+
+    `min_toc_items` guards the other direction: a real ToC lists on the
+    order of 15+ items (1 through 9C, in a modern 10-K), so a run shorter
+    than this is more likely two genuinely short, distinct real sections
+    happening to sit close together than an actual ToC -- confirmed by a
+    real regression while building this function, where a 2-candidate
+    document (one real heading, one short real body, followed by an
+    unrelated later item) was otherwise misclassified as a ToC and dropped
+    entirely.
+    """
+    if len(ordered) < 2:
+        return ordered
+
+    # A candidate only belongs to the block once CONFIRMED by a close,
+    # distinct successor -- so the very first candidate isn't assumed to
+    # be in the block until candidate 1 validates it. Each successful step
+    # extends the block to include the candidate just examined.
+    seen: set[str] = {ordered[0].item_key}
+    toc_block_end = -1
+    for i in range(1, len(ordered)):
+        prev, candidate = ordered[i - 1], ordered[i]
+        if candidate.item_key in seen or (candidate.offset - prev.line_end) > toc_max_gap:
+            break
+        seen.add(candidate.item_key)
+        toc_block_end = i
+
+    if toc_block_end + 1 < min_toc_items:
+        return ordered
+    return ordered[toc_block_end + 1 :]
+
+
+def _select_real_headings(
+    candidates: list[_HeadingCandidate], min_gap_chars: int = 400, toc_max_gap: int = 2000
+) -> list[_HeadingCandidate]:
+    """Disambiguate real section headings from table-of-contents entries --
+    AND from repeated running page-headers some filers print on every page
+    of a long section.
+
+    Step 1: drop the entire leading ToC block at once (_exclude_table_of_contents).
+
+    Step 2: among what's left, for each item_key take the FIRST candidate
+    (in document order) whose gap to the next candidate is large -- not the
+    last. This must be "first", not "last": when a filer repeats "Item 7"
+    or "Item 8" as a running page header throughout a long section, every
+    repeat also has a large gap to whatever comes next (a full page of real
+    content each time), so "last occurrence with a large gap" would pick
+    the LAST repeat -- deep inside the section, often in the trailing
+    audit-report boilerplate -- instead of the true start.
+
+    Gap-to-NEXT is used here deliberately, not gap-to-previous: SEC filings
+    since 2021 almost universally show "Item 6. [Reserved]" (the Selected
+    Financial Data requirement was eliminated that year) with essentially
+    no content, so the real Item 7 heading immediately follows it with a
+    near-zero gap from the previous candidate -- confirmed on both real
+    MSFT and PG filings. Gap-to-next doesn't have this problem: a real
+    heading is reliably followed by substantial body text regardless of
+    how little preceded it.
+
+    If NO candidate for an item_key clears the threshold at all -- e.g. a
+    filer whose real Item 3 is legitimately a one-line "None." with under
+    400 chars before Item 4 starts -- fall back to the LAST occurrence
+    overall rather than the first, since within the post-ToC candidates
+    the real heading is always the (possibly only) occurrence, and
+    defaulting to the last one is the safer bet if none of them clear the
+    threshold at all.
     """
     if not candidates:
         return []
 
-    ordered = sorted(candidates, key=lambda c: c.offset)
+    ordered = _exclude_table_of_contents(sorted(candidates, key=lambda c: c.offset), toc_max_gap)
     gaps: list[int | None] = []
     for i, candidate in enumerate(ordered):
         if i + 1 < len(ordered):
@@ -110,7 +187,7 @@ def _select_real_headings(
     selected = []
     for item_key, indices in indices_by_item.items():
         qualifying = [i for i in indices if gaps[i] is None or gaps[i] >= min_gap_chars]
-        chosen = max(qualifying) if qualifying else max(indices)
+        chosen = min(qualifying) if qualifying else max(indices)
         selected.append(ordered[chosen])
 
     return sorted(selected, key=lambda c: c.offset)
