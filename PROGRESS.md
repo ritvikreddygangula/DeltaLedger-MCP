@@ -285,7 +285,39 @@ The `"medium"` row above also happens to be this project's first real post-diffi
 - [x] `EVAL_REPORT.md` updated with real post-diffing numbers (aggregate only -- see the report's own note on why per-case detail wasn't regenerated)
 - [x] Full test suite green throughout (119 passing, up from 105 at the start of this Part)
 - [x] Bookkeeping (this update)
+- [x] `src/connectors/section_parser.py` fix (see below) -- landed on this branch after the above, before merge
+
+**A real parsing bug found while expanding the curated set past 6 companies, not from this Part's own work but fixed on this branch.** `_select_real_headings` picked the *last* heading candidate with a large gap to the next one -- correct when a filer's real heading appears exactly once, wrong when a filer prints "Item 7"/"Item 8" as a running page header on every page of a long section (confirmed live on a real MSFT filing: 16 and 40 repeats), which made it select the last repeat -- deep in trailing boilerplate -- instead of the true heading, and produced 0 findings for MSFT that read as "nothing material changed" but was actually "the classifier never saw real content." Root-caused by re-parsing real filing HTML and inspecting every candidate rather than guessing. Fixed with `_exclude_table_of_contents`, which identifies and drops the whole leading ToC block at once (a contiguous run of distinct item_keys with small gaps) instead of judging each candidate's gap in isolation -- the isolated-judgment approach also had a second live bug, a single anomalously large gap inside PG's own ToC entry for Item 8 that fooled the per-candidate check into treating the ToC line as the real 116,000-character Financial Statements section. Verified against all 6 previously-correct companies (byte-identical output) plus MSFT (33 real findings instead of 0). Two new regression tests. Two more real filer patterns found and *not* chased -- documented as known limitations alongside WFC/COST rather than patched: JPM incorporates Item 7/8 by reference to page numbers (same class as Wells Fargo), and Visa has an inline mid-sentence "see Item 7 of this report" reference that matches the heading pattern.
 
 **Current sub-step:** none -- Part 8 complete.
 
 **Open decisions / blockers:** none. Items 5 and 6 from the original cost-audit list (a per-day budget guardrail and EDGAR ticker validation before spend) remain deliberately unimplemented -- both only matter if a live trigger surface for new, user-initiated pipeline runs is ever actually built, which it was not.
+
+## Part 9 — Observability & CI Hardening (branch `part9-observability-and-hardening`)
+
+**What this Part adds:** production-maturity signals that were the actual gap after Part 8 -- the pipeline and API worked, but nothing was observable in production terms (stdout `print()` only, no metrics, no structured logs) and CI had zero security posture beyond "does it work." Two independent additions, both explicitly *not* new AI capability, per the standing scope for this Part: structured observability, and CI-level dependency/secret scanning plus a real health check.
+
+**Structured logging, no new dependency.** `src/observability.py` is a ~60-line hand-rolled JSON log formatter over stdlib `logging` -- deliberately not `structlog`/`python-json-logger`, since both the deployed Lambda (CloudWatch captures its stdout automatically) and any local script already have a place these JSON lines land without any new AWS resource, agent, or third-party service. `get_logger()`, `log_event()`, and a `timed()` context manager (logs `duration_ms` on exit, success or exception, plus whatever fields the caller adds during the block) are the whole public surface.
+
+**Instrumented at every layer that previously had zero visibility:**
+- `src/agents/graph.py`: each of the three pipeline stages (align/classify/verify) logs its own duration plus stage-specific counts (matched/removed/new alignments; findings produced; credible vs. hard-failed verifications). The content-hash cache added in Part 8 now logs `llm_cache_hit`/`llm_cache_miss` per call -- this was previously invisible even though the mechanism already existed.
+- `src/agents/classifier.py` / `verifier.py`: every real OpenAI call logs `input_tokens`/`output_tokens`/`total_tokens` from the Responses API's own `usage` field (confirmed live that `response.usage` exists on this SDK version before writing code against it -- `openai.types.responses.response_usage.ResponseUsage` has `input_tokens`, `output_tokens`, `total_tokens`), via a shared `log_usage()` helper in `_llm_utils.py` so classify and verify don't duplicate the extraction logic. Usage is `None`-tolerant by construction, since test doubles don't set it.
+- `src/api/rest.py`: a `log_requests` middleware logs method/path/status/duration for every HTTP request -- this is the part of the system that's actually deployed and running 24/7, and it had no logging at all before this.
+- `src/api/mcp_server.py`: all three tools wrapped in the same `timed()` helper, logging tool name, relevant argument (ticker/finding_id), and a `found` flag alongside duration.
+
+**A real `/health` endpoint, deliberately not built on the existing `_get_conn` dependency.** The existing pattern assumes a successful connection and lets a failure surface as an unhandled 500 -- exactly wrong for a health check, whose entire job is to report that failure cleanly. `GET /health` catches the connection attempt explicitly and returns a generic `{"status": "degraded", "database": "unreachable"}` at 503 -- the real exception (which can contain hostnames/driver internals) is logged server-side only via `logger.exception()`, never put in the public response body. Covered by a test that plants a real secret-looking string in the simulated exception and asserts it never reaches `response.text`.
+
+**CI hardening: a new `security` job, independent of `test` and `eval`.** Runs on every push and PR (unlike `eval`, these are free -- no reason to restrict them): `uv export` the lockfile to a plain requirements file, then `uvx pip-audit -r` it for known CVEs (verified live against this project's real 85 resolved dependencies before writing it into CI -- zero known vulnerabilities at time of writing, and `uvx` means pip-audit itself is never added as a project dependency). Secret scanning via `gitleaks/gitleaks-action@v3` -- deliberately not `@v2`, confirmed via the action's own current docs that v2 stops working once GitHub finishes removing the Node 20 runtime it depends on (rolling out through September 2026), and v3 needs no license for a personal public repo.
+
+- [x] `src/observability.py` (JSON formatter, `get_logger`, `log_event`, `timed`) + 6 unit tests
+- [x] Pipeline stage timing + cache hit/miss logging in `graph.py`
+- [x] Per-call OpenAI token usage logging in `classifier.py`/`verifier.py` via a shared `_llm_utils.log_usage` helper
+- [x] REST request-logging middleware + `GET /health` (generic-on-failure, no detail leakage) + 3 new tests
+- [x] MCP tool-call logging (all 3 tools) + 1 new test
+- [x] CI `security` job: `pip-audit` (dependency CVEs) + `gitleaks-action@v3` (committed secrets)
+- [x] Full test suite green throughout (132 passing, up from 120 at the start of this Part)
+- [x] Bookkeeping (this update)
+
+**Current sub-step:** none -- Part 9 complete.
+
+**Open decisions / blockers:** none. Not done, and deliberately out of scope for this Part per the original 5-idea list this was picked from: confidence-calibration-at-threshold analysis (idea #1) and Alembic migrations (idea #4) remain candidates for a future Part.

@@ -445,3 +445,62 @@ def test_graph_never_imports_real_openai_client_for_verify_either():
     )
 
     assert len(verify_calls) == 1
+
+
+def test_pipeline_stages_emit_structured_log_events(caplog):
+    import logging
+
+    def fake_embed(texts):
+        return [[1.0, 0.0] for _ in texts]
+
+    def fake_classify(alignment):
+        return [
+            Finding(item_key="1A", category="other", tier="low", reasoning="stub",
+                    older_excerpt=None, newer_excerpt=None)
+        ]
+
+    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify, verify_fn=_no_op_verify)
+    with caplog.at_level(logging.INFO):
+        graph.invoke(
+            {
+                "older_sections": [_section("1A", "x")],
+                "newer_sections": [_section("1A", "y")],
+            }
+        )
+
+    events = [r.fields["event"] for r in caplog.records if hasattr(r, "fields")]
+    assert "align_stage" in events
+    assert "classify_stage" in events
+    assert "verify_stage" in events
+
+    align_record = next(r for r in caplog.records if getattr(r, "fields", {}).get("event") == "align_stage")
+    assert align_record.fields["matched"] == 1
+    assert "duration_ms" in align_record.fields
+
+    classify_record = next(r for r in caplog.records if getattr(r, "fields", {}).get("event") == "classify_stage")
+    assert classify_record.fields["finding_count"] == 1
+
+
+def test_cache_hit_and_miss_are_logged(caplog):
+    import logging
+
+    def fake_embed(texts):
+        return [[1.0, 0.0] for _ in texts]
+
+    def fake_classify(alignment):
+        return [
+            Finding(item_key="1A", category="other", tier="low", reasoning="stub",
+                    older_excerpt=None, newer_excerpt=None)
+        ]
+
+    conn = _StubCacheConnection()
+    state = {"older_sections": [_section("1A", "x")], "newer_sections": [_section("1A", "y")]}
+    graph = build_graph(embed_fn=fake_embed, classify_fn=fake_classify, verify_fn=_no_op_verify, cache_conn=conn)
+
+    with caplog.at_level(logging.INFO):
+        graph.invoke(state)
+        caplog.clear()
+        graph.invoke(state)  # second run -- should be a cache hit
+
+    events = [r.fields["event"] for r in caplog.records if hasattr(r, "fields")]
+    assert "llm_cache_hit" in events

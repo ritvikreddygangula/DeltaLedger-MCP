@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from mcp import Client
 
@@ -50,6 +52,21 @@ async def test_list_tickers_tool(monkeypatch):
         result = await client.call_tool("list_tickers", {})
 
     assert result.structured_content["result"] == ["AAPL"]
+
+
+@pytest.mark.anyio
+async def test_tool_calls_are_logged_with_timing(monkeypatch, caplog):
+    _patch_connection(monkeypatch, results=[[{"ticker": "AAPL"}]])
+
+    with caplog.at_level(logging.INFO):
+        async with Client(mcp, raise_exceptions=True) as client:
+            await client.call_tool("list_tickers", {})
+
+    events = [r for r in caplog.records if getattr(r, "fields", {}).get("event") == "mcp_tool_call"]
+    assert len(events) == 1
+    assert events[0].fields["tool"] == "list_tickers"
+    assert events[0].fields["ticker_count"] == 1
+    assert "duration_ms" in events[0].fields
 
 
 @pytest.mark.anyio

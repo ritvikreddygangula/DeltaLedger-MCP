@@ -1,5 +1,8 @@
+import logging
+
 from fastapi.testclient import TestClient
 
+import src.api.rest as rest_module
 from src.api.rest import _get_conn, app
 
 
@@ -107,3 +110,45 @@ def test_read_finding_returns_finding():
     assert response.status_code == 200
     assert response.json()["id"] == 5
     app.dependency_overrides.clear()
+
+
+def test_health_returns_ok_when_db_reachable(monkeypatch):
+    monkeypatch.setattr(rest_module, "get_connection", lambda: _StubConnection())
+    client = TestClient(app)
+
+    response = client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok", "database": "connected"}
+
+
+def test_health_returns_503_without_leaking_details_when_db_unreachable(monkeypatch):
+    def _raise():
+        raise ConnectionError("password authentication failed for user \"secret_internal_user\"")
+
+    monkeypatch.setattr(rest_module, "get_connection", _raise)
+    client = TestClient(app)
+
+    response = client.get("/health")
+
+    assert response.status_code == 503
+    body = response.json()
+    assert body == {"status": "degraded", "database": "unreachable"}
+    assert "secret_internal_user" not in response.text
+
+
+def test_requests_are_logged_with_method_path_status_and_duration(caplog):
+    app.dependency_overrides[_get_conn] = _override_conn([[{"ticker": "AAPL"}]])
+    client = TestClient(app)
+
+    with caplog.at_level(logging.INFO):
+        client.get("/tickers")
+
+    app.dependency_overrides.clear()
+    events = [r for r in caplog.records if getattr(r, "fields", {}).get("event") == "http_request"]
+    assert len(events) == 1
+    fields = events[0].fields
+    assert fields["method"] == "GET"
+    assert fields["path"] == "/tickers"
+    assert fields["status_code"] == 200
+    assert "duration_ms" in fields
