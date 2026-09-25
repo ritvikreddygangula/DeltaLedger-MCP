@@ -1,10 +1,29 @@
-from fastapi import Depends, FastAPI, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+import time
 
+from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
+
+from ..observability import get_logger, log_event
 from ..storage.db import get_connection
 from .queries import get_finding, get_report, list_curated_tickers
 
+logger = get_logger(__name__)
+
 app = FastAPI(title="materiality-engine API")
+
+
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    start = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = round((time.perf_counter() - start) * 1000, 1)
+    log_event(
+        logger, "http_request",
+        method=request.method, path=request.url.path,
+        status_code=response.status_code, duration_ms=duration_ms,
+    )
+    return response
 
 # The frontend (S3 + CloudFront) is a different origin than this API
 # (API Gateway), so the browser enforces CORS on every fetch() call from it.
@@ -27,6 +46,27 @@ def _get_conn():
         yield conn
     finally:
         conn.close()
+
+
+@app.get("/health")
+def health() -> JSONResponse:
+    """Deliberately doesn't use the _get_conn dependency -- that assumes a
+    successful connection and lets a DB failure surface as an unhandled 500.
+    A health check's whole job is to report that failure cleanly instead.
+    The raw exception is logged server-side only; the public response stays
+    generic so it doesn't hand a stranger infrastructure details (hostnames,
+    driver internals) for free.
+    """
+    try:
+        conn = get_connection()
+        try:
+            conn.execute("SELECT 1")
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception("health check: database unreachable")
+        return JSONResponse(status_code=503, content={"status": "degraded", "database": "unreachable"})
+    return JSONResponse(status_code=200, content={"status": "ok", "database": "connected"})
 
 
 @app.get("/tickers")

@@ -4,11 +4,14 @@ from dataclasses import dataclass
 from openai import OpenAI
 from pydantic import BaseModel, Field
 
+from ..observability import get_logger, log_event
 from . import classifier
-from ._llm_utils import call_responses_parse
+from ._llm_utils import call_responses_parse, log_usage
 from .aligner import SectionAlignment
 from .diffing import diff_sections
 from .classifier import Finding, MaterialityTier
+
+logger = get_logger(__name__)
 
 DEFAULT_CHAT_MODEL = "gpt-5.4-mini"
 DEFAULT_REASONING_EFFORT = "medium"
@@ -197,6 +200,7 @@ def verify_findings_for_alignment(
         return results
 
     client = client or OpenAI()
+    item_key = needs_llm[0].item_key
     try:
         response = call_responses_parse(
             client,
@@ -209,8 +213,13 @@ def verify_findings_for_alignment(
             reasoning={"effort": reasoning_effort},
         )
         parsed = response.output_parsed
+        log_usage(
+            logger, "openai_call", response,
+            stage="verify", model=model, item_key=item_key, claim_count=len(needs_llm),
+        )
     except Exception:
         parsed = None
+        log_event(logger, "openai_call_failed", stage="verify", model=model, item_key=item_key)
 
     if parsed is None or len(parsed.verifications) != len(needs_llm):
         results.extend(

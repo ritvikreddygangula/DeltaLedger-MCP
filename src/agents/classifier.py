@@ -4,9 +4,12 @@ from typing import Literal
 from openai import OpenAI
 from pydantic import BaseModel
 
-from ._llm_utils import call_responses_parse
+from ..observability import get_logger, log_event
+from ._llm_utils import call_responses_parse, log_usage
 from .aligner import SectionAlignment
 from .diffing import diff_sections
+
+logger = get_logger(__name__)
 
 FindingCategory = Literal[
     "new_risk_factor",
@@ -126,6 +129,7 @@ def classify_alignment(
             reasoning={"effort": reasoning_effort},
         )
         parsed = response.output_parsed
+        log_usage(logger, "openai_call", response, stage="classify", model=model, item_key=item_key)
     except Exception:
         # The SDK can raise a validation error (not just return output_parsed
         # = None) when the model's output is truncated mid-JSON -- a real,
@@ -133,6 +137,7 @@ def classify_alignment(
         # Degrade to zero findings for this alignment rather than crashing
         # the whole pipeline run.
         parsed = None
+        log_event(logger, "openai_call_failed", stage="classify", model=model, item_key=item_key)
 
     if parsed is None:
         return []

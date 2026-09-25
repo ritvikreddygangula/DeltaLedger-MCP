@@ -7,12 +7,15 @@ import psycopg
 from langgraph.graph import END, START, StateGraph
 
 from ..embeddings.openai_client import get_embeddings
+from ..observability import get_logger, log_event, timed
 from ..storage import llm_cache
 from . import classifier, verifier
 from .aligner import DEFAULT_MATCH_THRESHOLD, SectionAlignment, align_sections
 from .classifier import Finding, classify_alignment
 from .state import PipelineState
 from .verifier import VerifiedFinding, verify_findings_for_alignment
+
+logger = get_logger(__name__)
 
 EmbedFn = Callable[[list[str]], list[list[float]]]
 ClassifyFn = Callable[[SectionAlignment], list[Finding]]
@@ -26,17 +29,23 @@ MAX_WORKERS = 8
 
 def _make_align_node(embed_fn: EmbedFn, threshold: float):
     def align_node(state: PipelineState) -> dict:
-        older_sections = state["older_sections"]
-        newer_sections = state["newer_sections"]
-        older_embeddings = embed_fn([s["body_text"] for s in older_sections])
-        newer_embeddings = embed_fn([s["body_text"] for s in newer_sections])
-        alignments = align_sections(
-            older_sections,
-            newer_sections,
-            older_embeddings,
-            newer_embeddings,
-            threshold=threshold,
-        )
+        with timed(logger, "align_stage") as extra:
+            older_sections = state["older_sections"]
+            newer_sections = state["newer_sections"]
+            older_embeddings = embed_fn([s["body_text"] for s in older_sections])
+            newer_embeddings = embed_fn([s["body_text"] for s in newer_sections])
+            alignments = align_sections(
+                older_sections,
+                newer_sections,
+                older_embeddings,
+                newer_embeddings,
+                threshold=threshold,
+            )
+            extra["older_section_count"] = len(older_sections)
+            extra["newer_section_count"] = len(newer_sections)
+            extra["matched"] = sum(1 for a in alignments if a.status == "matched")
+            extra["removed"] = sum(1 for a in alignments if a.status == "removed")
+            extra["new"] = sum(1 for a in alignments if a.status == "new")
         return {"alignments": alignments}
 
     return align_node
@@ -46,19 +55,22 @@ def _make_classify_node(classify_fn: ClassifyFn):
     def classify_node(state: PipelineState) -> dict:
         alignments = state["alignments"]
         if not alignments:
+            log_event(logger, "classify_stage", duration_ms=0.0, alignment_count=0, finding_count=0)
             return {"classifications": [], "classified_pairs": []}
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            # executor.map preserves input order in its output, regardless
-            # of which call finishes first -- results[i] always corresponds
-            # to alignments[i].
-            results = list(executor.map(classify_fn, alignments))
+        with timed(logger, "classify_stage", alignment_count=len(alignments)) as extra:
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                # executor.map preserves input order in its output, regardless
+                # of which call finishes first -- results[i] always corresponds
+                # to alignments[i].
+                results = list(executor.map(classify_fn, alignments))
 
-        classifications: list[Finding] = []
-        classified_pairs: list[tuple[SectionAlignment, Finding]] = []
-        for alignment, findings in zip(alignments, results):
-            classifications.extend(findings)
-            classified_pairs.extend((alignment, finding) for finding in findings)
+            classifications: list[Finding] = []
+            classified_pairs: list[tuple[SectionAlignment, Finding]] = []
+            for alignment, findings in zip(alignments, results):
+                classifications.extend(findings)
+                classified_pairs.extend((alignment, finding) for finding in findings)
+            extra["finding_count"] = len(classifications)
         return {"classifications": classifications, "classified_pairs": classified_pairs}
 
     return classify_node
@@ -90,14 +102,18 @@ def _make_verify_node(verify_fn: VerifyFn):
     def verify_node(state: PipelineState) -> dict:
         groups = _group_by_alignment(state["classified_pairs"])
         if not groups:
+            log_event(logger, "verify_stage", duration_ms=0.0, group_count=0, verified_count=0)
             return {"verified_findings": []}
 
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            results = list(
-                executor.map(lambda group: verify_fn(group[1], group[0]), groups)
-            )
+        with timed(logger, "verify_stage", group_count=len(groups)) as extra:
+            with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+                results = list(
+                    executor.map(lambda group: verify_fn(group[1], group[0]), groups)
+                )
 
-        verified_findings = [vf for group_results in results for vf in group_results]
+            verified_findings = [vf for group_results in results for vf in group_results]
+            extra["verified_count"] = len(verified_findings)
+            extra["credible_count"] = sum(1 for vf in verified_findings if vf.excerpt_verified)
         return {"verified_findings": verified_findings}
 
     return verify_node
@@ -119,10 +135,13 @@ def _classify_cache_key(alignment: SectionAlignment) -> str:
 
 def _cached_classify(classify_fn: ClassifyFn, conn: psycopg.Connection) -> ClassifyFn:
     def wrapped(alignment: SectionAlignment) -> list[Finding]:
+        item_key = (alignment.older_section or alignment.newer_section)["item_key"]
         key = _classify_cache_key(alignment)
         cached = llm_cache.get_cached(conn, key)
         if cached is not None:
+            log_event(logger, "llm_cache_hit", kind="classify", item_key=item_key)
             return [Finding(**d) for d in json.loads(cached)]
+        log_event(logger, "llm_cache_miss", kind="classify", item_key=item_key)
         findings = classify_fn(alignment)
         llm_cache.set_cached(
             conn, key, "classify",
@@ -155,10 +174,13 @@ def _verified_finding_from_dict(d: dict) -> VerifiedFinding:
 
 def _cached_verify(verify_fn: VerifyFn, conn: psycopg.Connection) -> VerifyFn:
     def wrapped(findings: list[Finding], alignment: SectionAlignment) -> list[VerifiedFinding]:
+        item_key = (alignment.older_section or alignment.newer_section)["item_key"]
         key = _verify_cache_key(findings, alignment)
         cached = llm_cache.get_cached(conn, key)
         if cached is not None:
+            log_event(logger, "llm_cache_hit", kind="verify", item_key=item_key)
             return [_verified_finding_from_dict(d) for d in json.loads(cached)]
+        log_event(logger, "llm_cache_miss", kind="verify", item_key=item_key)
         verified = verify_fn(findings, alignment)
         llm_cache.set_cached(
             conn, key, "verify",

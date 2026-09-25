@@ -48,6 +48,7 @@ A read-only API and MCP server, deployed to AWS Lambda behind API Gateway, servi
 GET /api/tickers                # the curated set, e.g. ["AAPL","LYV","MGM","NKE","PG","SBUX"]
 GET /api/reports/{ticker}       # both filings + every finding for that pair
 GET /api/findings/{finding_id}  # a single finding's full detail
+GET /api/health                 # DB connectivity check -- 200 if reachable, 503 (generic, no detail leaked) if not
 ```
 
 **MCP server** — same backend, same three operations, exposed as tools (`list_tickers`, `get_materiality_report`, `get_finding_citation`) at `https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/mcp` via the Streamable HTTP transport. Point any MCP client at that URL directly, or add it to Claude Code in one command:
@@ -66,3 +67,15 @@ A minimal static page: pick a curated ticker, see every finding with its tier, c
 ./scripts/deploy.sh                                   # API + MCP server (Lambda via SAM)
 ./scripts/deploy_frontend.sh <bucket> <distribution-id>  # static frontend (S3 + CloudFront)
 ```
+
+## Observability & CI (Part 9)
+
+Every layer -- pipeline stages, OpenAI calls, REST requests, MCP tool calls -- logs structured JSON lines (`src/observability.py`, stdlib `logging` only, no new dependency). Both the deployed Lambda and any local script send stdout to a place that already captures it (CloudWatch, or a terminal), so these are immediately queryable in CloudWatch Logs Insights, e.g.:
+
+```
+fields @timestamp, duration_ms, event, ticker
+| filter event = "http_request"
+| sort duration_ms desc
+```
+
+CI runs a `security` job on every push and PR (`.github/workflows/ci.yml`): `pip-audit` against the exported lockfile for known dependency CVEs, and `gitleaks` for committed secrets.
