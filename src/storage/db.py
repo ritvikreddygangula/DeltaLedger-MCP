@@ -12,13 +12,11 @@ from .schema import SCHEMA_DDL
 if TYPE_CHECKING:
     # Pipeline-only types, needed here only for annotations on
     # pipeline-only functions (insert_findings, upsert_filing,
-    # insert_sections). Importing them eagerly at module load pulls in
-    # openai/beautifulsoup4/etc., which aren't installed in the deployed
-    # API's Lambda (see pyproject.toml's "pipeline" dependency group) --
-    # this file is also imported by the read-only API/MCP layer, so an
-    # eager import here broke the Lambda at cold start with
-    # ModuleNotFoundError: No module named 'openai', confirmed live via
-    # CloudWatch logs.
+    # insert_sections). This module is also imported by the read-only
+    # API/MCP layer, which deliberately excludes the heavy pipeline
+    # dependencies (openai, beautifulsoup4, etc.) to stay under Lambda's
+    # package size limit -- importing these eagerly at module load would
+    # break that Lambda at cold start with ModuleNotFoundError.
     from ..agents.verifier import VerifiedFinding
     from ..connectors.base import FilingMetadata
     from ..connectors.section_parser import TaggedSection
@@ -150,8 +148,7 @@ def get_findings_for_filing_pair(
     together. "Most recent run" = every finding within 10 seconds of the
     latest created_at for this pair -- one run's insert_findings call is a
     single batch INSERT, so a real run's rows land within microseconds of
-    each other (confirmed empirically against live data), while separate
-    runs are reliably minutes apart.
+    each other, while separate runs are reliably minutes apart.
     """
     return conn.execute(
         """WITH latest AS (

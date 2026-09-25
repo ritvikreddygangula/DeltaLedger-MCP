@@ -30,8 +30,8 @@ jobs:
     # events to resolve which commits to scan -- the default GITHUB_TOKEN
     # only carries `contents: read` unless a job explicitly asks for more,
     # so without this it 403s with "Resource not accessible by integration"
-    # on every PR (confirmed live; push-triggered runs never hit this,
-    # since there's no PR to look up commits on).
+    # on every PR (push-triggered runs never hit this, since there's no PR
+    # to look up commits on).
     permissions:
       contents: read
       pull-requests: read

@@ -6,24 +6,23 @@ from .verifier import VerifiedFinding
 
 
 class PipelineState(TypedDict):
-    """Shared state threaded through the whole materiality-engine LangGraph
-    pipeline. One flat schema for all Parts (rather than per-Part subclasses)
-    since StateGraph takes a single schema type -- each Part adds only the
-    fields its own node(s) read/write; earlier Parts' nodes and fields are
-    never touched.
+    """Shared state threaded through the align -> classify -> verify
+    LangGraph pipeline. One flat schema (rather than a subclass per stage)
+    since StateGraph takes a single schema type -- each stage reads/writes
+    only its own fields.
     """
 
-    # --- Part 3 (Aligner) ---
+    # --- Aligner ---
     older_sections: list[dict]
     newer_sections: list[dict]
     alignments: list[SectionAlignment]
 
-    # --- Part 4 (Materiality Classifier) ---
+    # --- Classifier ---
     classifications: NotRequired[list[Finding]]
     # Each finding paired with the alignment it came from -- Finding.item_key
     # alone isn't a reliable re-matching key: a "removed" and a "new"
     # alignment from the same run can share the same item_key.
     classified_pairs: NotRequired[list[tuple[SectionAlignment, Finding]]]
 
-    # --- Part 5 (Verifier) ---
+    # --- Verifier ---
     verified_findings: NotRequired[list[VerifiedFinding]]

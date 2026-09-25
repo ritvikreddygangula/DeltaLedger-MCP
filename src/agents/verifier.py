@@ -180,10 +180,10 @@ def verify_findings_for_alignment(
 ) -> list[VerifiedFinding]:
     """Verifies every finding for one alignment in a single LLM call, rather
     than one call per finding. A section's full text can run tens of
-    thousands of tokens; resending it once per finding (the original Part 5
-    design) multiplies that cost by however many findings the section has.
-    Findings that fail the Layer-1 hallucination check are hard-failed
-    without ever entering the batch -- they still cost zero LLM calls.
+    thousands of tokens; resending it once per finding would multiply that
+    cost by however many findings the section has. Findings that fail the
+    Layer-1 hallucination check are hard-failed without ever entering the
+    batch -- they still cost zero LLM calls.
     """
     if not findings:
         return []

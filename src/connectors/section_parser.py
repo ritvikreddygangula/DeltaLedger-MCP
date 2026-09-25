@@ -89,29 +89,23 @@ def _exclude_table_of_contents(
     separated from the next by a small gap -- so it shows up as a
     contiguous run of DISTINCT item_keys near the start of the document.
     Real body content, by contrast, either has just one occurrence of an
-    item_key or -- when a filer prints "Item 7" as a running page header on
-    every page of a long section (confirmed live on a real MSFT filing: 16
-    and 40 repeats for two different items) -- REPEATS the same item_key.
-    The block ends at the first repeat (real content started) or the first
-    large gap (we've moved past the ToC into real body text).
+    item_key, or -- when a filer prints "Item 7" as a running page header
+    on every page of a long section -- REPEATS the same item_key many
+    times over. The block ends at the first repeat (real content started)
+    or the first large gap (we've moved past the ToC into real body text).
 
     Judging ToC membership this way, rather than by each candidate's own
     gap to its neighbor, matters because a single ToC entry can have an
-    anomalously large gap purely from that filer's own formatting quirks
-    (confirmed live on a real PG filing: the ToC's "Item 8" line had a
-    973-char gap to the next ToC entry, comfortably clearing a 400-char
-    per-candidate threshold, which caused an earlier version of this
-    function to select the ToC line itself as if it were the real,
-    116,000-character Financial Statements section).
+    anomalously large gap purely from a filer's own formatting quirks --
+    a per-candidate threshold check can end up selecting that ToC line
+    itself as if it were the real section.
 
     `min_toc_items` guards the other direction: a real ToC lists on the
     order of 15+ items (1 through 9C, in a modern 10-K), so a run shorter
     than this is more likely two genuinely short, distinct real sections
-    happening to sit close together than an actual ToC -- confirmed by a
-    real regression while building this function, where a 2-candidate
-    document (one real heading, one short real body, followed by an
-    unrelated later item) was otherwise misclassified as a ToC and dropped
-    entirely.
+    sitting close together than an actual ToC -- e.g. one short real
+    section immediately followed by an unrelated later item, which would
+    otherwise be misclassified as a ToC and dropped entirely.
     """
     if len(ordered) < 2:
         return ordered
@@ -156,10 +150,9 @@ def _select_real_headings(
     since 2021 almost universally show "Item 6. [Reserved]" (the Selected
     Financial Data requirement was eliminated that year) with essentially
     no content, so the real Item 7 heading immediately follows it with a
-    near-zero gap from the previous candidate -- confirmed on both real
-    MSFT and PG filings. Gap-to-next doesn't have this problem: a real
-    heading is reliably followed by substantial body text regardless of
-    how little preceded it.
+    near-zero gap from the previous candidate. Gap-to-next doesn't have
+    this problem: a real heading is reliably followed by substantial body
+    text regardless of how little preceded it.
 
     If NO candidate for an item_key clears the threshold at all -- e.g. a
     filer whose real Item 3 is legitimately a one-line "None." with under

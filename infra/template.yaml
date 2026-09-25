@@ -4,7 +4,7 @@ Description: >
   materiality-engine -- read-only REST API + MCP server serving cached
   materiality findings for curated tickers. No pipeline, no job queue: every
   request is a Postgres read against results the CLI scripts already
-  computed and stored (see PROGRESS.md, Part 7).
+  computed and stored.
 
 Parameters:
   DatabaseUrl:

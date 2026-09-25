@@ -194,10 +194,10 @@ def test_none_output_parsed_degrades_to_empty_list():
 
 
 def test_parse_exception_degrades_to_empty_list_instead_of_crashing():
-    # Live-discovered bug (Part 6 eval run against LYV): the SDK can raise a
-    # validation error, not just return output_parsed=None, when the model's
-    # JSON output is truncated mid-string. Must degrade gracefully like the
-    # None case, not propagate and crash the whole pipeline run.
+    # The SDK can raise a validation error, not just return
+    # output_parsed=None, when the model's JSON output is truncated
+    # mid-string. Must degrade gracefully like the None case, not
+    # propagate and crash the whole pipeline run.
     alignment = SectionAlignment(
         status="matched",
         older_section=_section("1A"),

@@ -1,7 +1,6 @@
 #!/usr/bin/env bash
 # Syncs frontend/ to the S3 bucket backing the manually-created CloudFront
-# distribution (see PROGRESS.md, Part 7, for why this stays manual console
-# setup rather than IaC -- same reasoning as RDS). Usage:
+# distribution (set up via console rather than IaC, same as RDS). Usage:
 #   ./scripts/deploy_frontend.sh <bucket-name> [cloudfront-distribution-id]
 set -euo pipefail
 

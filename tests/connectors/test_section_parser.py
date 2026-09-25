@@ -69,11 +69,10 @@ def test_handles_nbsp_between_item_and_number():
 
 
 def test_selects_first_occurrence_when_item_repeats_as_a_running_page_header():
-    # Live-discovered bug on a real MSFT filing: some filers print "Item 7"
-    # as a running header on every page of a long section (16-40 repeats
-    # observed), not just once at the real heading. Each repeat is also
+    # Some filers print "Item 7" as a running header on every page of a
+    # long section, not just once at the real heading. Each repeat is also
     # followed by a full page of real content, so "last occurrence with a
-    # large gap to the next heading" used to pick the LAST repeat -- deep
+    # large gap to the next heading" would pick the LAST repeat -- deep
     # inside the section -- instead of the true start. This constructs that
     # exact shape: a ToC entry (tiny gap to the next ToC line), then the
     # real heading, then several page-header repeats each separated by a
