@@ -4,185 +4,478 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>materiality-engine</title>
+<meta name="description" content="An AI diligence copilot that finds material changes across sequential SEC 10-K filings and verifies every citation before reporting it.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700;8..60,900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg: #0f1115;
-    --panel: #171a21;
-    --border: #2a2e38;
-    --text: #e6e8ec;
-    --muted: #9aa1ac;
-    --accent: #6ea8ff;
-    --high: #ff6b6b;
-    --medium: #ffb84d;
-    --low: #8fd67a;
+    --bg: #100f0d;
+    --panel: #17150f;
+    --border: #2b271f;
+    --ink: #ece6d8;
+    --muted: #a39a86;
+    --muted-2: #6b6555;
+    --accent: #c17a45;
+    --high: #c1584a;
+    --medium: #c99a3a;
+    --low: #7fa878;
   }
+
   * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+
   body {
     margin: 0;
     background: var(--bg);
-    color: var(--text);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
-    line-height: 1.5;
+    color: var(--ink);
+    font-family: "JetBrains Mono", ui-monospace, Menlo, monospace;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+    position: relative;
   }
-  header {
-    padding: 24px 32px;
+
+  /* A ledger rule down the page -- a quiet nod to this being a diligence
+     ledger, not a SaaS product page. Desktop only. */
+  body::before {
+    content: "";
+    position: fixed;
+    top: 0;
+    bottom: 0;
+    left: 56px;
+    width: 1px;
+    background: var(--border);
+    z-index: 0;
+  }
+  @media (max-width: 860px) { body::before { display: none; } }
+
+  h1, h2, h3 { font-family: "Source Serif 4", Georgia, serif; font-weight: 700; }
+
+  a { color: inherit; }
+
+  .wrap { max-width: 900px; margin: 0 auto; padding-left: 88px; padding-right: 28px; position: relative; z-index: 1; }
+  @media (max-width: 860px) { .wrap { padding-left: 24px; } }
+
+  /* ---------- Nav ---------- */
+  nav {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: rgba(16, 15, 13, 0.9);
     border-bottom: 1px solid var(--border);
   }
-  header h1 {
-    margin: 0 0 4px 0;
-    font-size: 20px;
-  }
-  header p {
-    margin: 0;
-    color: var(--muted);
-    font-size: 14px;
-  }
-  main {
+  nav .navwrap {
     max-width: 900px;
     margin: 0 auto;
-    padding: 24px 32px 64px;
-  }
-  .controls {
+    padding: 0 28px 0 88px;
     display: flex;
     align-items: center;
-    gap: 12px;
-    margin-bottom: 24px;
+    justify-content: space-between;
+    height: 58px;
   }
-  select {
-    background: var(--panel);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 8px 12px;
-    font-size: 14px;
-    min-width: 160px;
-  }
-  .status {
-    color: var(--muted);
-    font-size: 14px;
-  }
-  .filings {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 16px;
-    margin-bottom: 24px;
-  }
-  .filing-card {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px;
-  }
-  .filing-card .label {
-    color: var(--muted);
-    font-size: 12px;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    margin-bottom: 6px;
-  }
-  .filing-card a {
-    color: var(--accent);
+  @media (max-width: 860px) { nav .navwrap { padding-left: 24px; } }
+  .brand {
+    font-weight: 600;
+    font-size: 13.5px;
     text-decoration: none;
-    font-size: 13px;
-    word-break: break-all;
+    letter-spacing: 0.01em;
   }
-  .finding {
-    background: var(--panel);
-    border: 1px solid var(--border);
-    border-radius: 8px;
-    padding: 16px;
-    margin-bottom: 12px;
+  .brand .mark { color: var(--accent); margin-right: 6px; }
+  .nav-links { display: flex; align-items: center; gap: 22px; font-size: 12px; color: var(--muted); }
+  .nav-links a { text-decoration: none; border-bottom: 1px solid transparent; padding-bottom: 2px; transition: color 0.15s ease, border-color 0.15s ease; }
+  .nav-links a:hover { color: var(--ink); border-color: var(--muted); }
+  @media (max-width: 640px) { .nav-links a:not(.always-show) { display: none; } }
+
+  /* ---------- Hero ---------- */
+  .hero { padding: 72px 0 88px; }
+  .kicker { font-size: 11.5px; color: var(--muted-2); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 22px; }
+  .hero h1 {
+    font-size: clamp(30px, 4.2vw, 46px);
+    line-height: 1.28;
+    letter-spacing: -0.01em;
+    margin: 0 0 26px;
+    max-width: 720px;
   }
-  .finding-header {
+  .hero h1 .dim { color: var(--muted); }
+  .hero .lede {
+    max-width: 560px;
+    color: var(--muted);
+    font-size: 14px;
+    line-height: 1.8;
+    margin: 0 0 30px;
+  }
+  .hero-links { display: flex; align-items: center; gap: 14px; font-size: 12.5px; margin-bottom: 22px; }
+  .code-block.hero-cmd { margin-bottom: 20px; }
+  .hero-links a { text-decoration: none; border-bottom: 1px solid; padding-bottom: 2px; }
+  .hero-links a.primary { color: var(--accent); border-color: rgba(193,122,69,0.4); }
+  .hero-links a.secondary { color: var(--muted); border-color: var(--border); }
+  .hero-links a:hover { opacity: 0.75; }
+  .hero-links .sep { color: var(--muted-2); }
+
+  /* ---------- Exhibit (real diff panel) ---------- */
+  .exhibit { border: 1px solid var(--border); background: var(--panel); border-radius: 3px; }
+  .exhibit-head {
     display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 12px 18px;
+    border-bottom: 1px solid var(--border);
     flex-wrap: wrap;
   }
-  .tier {
-    font-size: 11px;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.03em;
-    padding: 2px 8px;
-    border-radius: 4px;
-  }
-  .tier.high { background: rgba(255,107,107,0.15); color: var(--high); }
-  .tier.medium { background: rgba(255,184,77,0.15); color: var(--medium); }
-  .tier.low { background: rgba(143,214,122,0.15); color: var(--low); }
-  .item-key {
-    color: var(--muted);
-    font-size: 13px;
-  }
-  .category {
-    font-size: 13px;
-    color: var(--muted);
-  }
-  .confidence {
-    margin-left: auto;
-    font-size: 12px;
-    color: var(--muted);
-  }
-  .reasoning {
-    font-size: 14px;
-    margin-bottom: 10px;
-  }
-  details {
-    font-size: 13px;
-    color: var(--muted);
-  }
-  details summary {
-    cursor: pointer;
-    color: var(--accent);
-    margin-bottom: 6px;
-  }
-  .excerpt {
-    background: #0d0f13;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 10px;
-    margin-bottom: 8px;
+  .exhibit-tag { font-size: 10.5px; letter-spacing: 0.1em; color: var(--muted-2); text-transform: uppercase; }
+  .exhibit-meta { font-size: 11.5px; color: var(--muted); }
+  .exhibit-body {
+    padding: 16px 20px;
+    font-family: "Source Serif 4", Georgia, serif;
+    font-size: 13.5px;
+    line-height: 1.65;
+    color: var(--ink);
     white-space: pre-wrap;
   }
-  .excerpt .which {
+  .exhibit-body del { color: var(--high); text-decoration: line-through; text-decoration-color: rgba(193,88,74,0.6); background: rgba(193,88,74,0.08); }
+  .exhibit-body ins { color: var(--low); text-decoration: underline; text-decoration-color: rgba(127,168,120,0.6); background: rgba(127,168,120,0.08); }
+  .exhibit-foot {
+    padding: 12px 18px;
+    border-top: 1px solid var(--border);
+    font-size: 12px;
     color: var(--muted);
-    font-size: 11px;
-    text-transform: uppercase;
-    margin-bottom: 4px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
   }
-  .empty, .error {
+
+  /* ---------- Sections ---------- */
+  section { padding: 76px 0; border-top: 1px solid var(--border); }
+  .sec-label { font-size: 11.5px; color: var(--muted-2); letter-spacing: 0.1em; text-transform: uppercase; margin-bottom: 14px; }
+  .sec-title { font-size: clamp(22px, 2.6vw, 30px); margin: 0 0 14px; max-width: 600px; }
+  .sec-desc { color: var(--muted); font-size: 13.5px; max-width: 520px; margin: 0 0 44px; line-height: 1.75; }
+
+  .reveal { opacity: 0; transform: translateY(12px); transition: opacity 0.5s ease, transform 0.5s ease; }
+  .reveal.visible { opacity: 1; transform: translateY(0); }
+
+  /* ---------- How it works ---------- */
+  .statute { border-left: 1px solid var(--border); }
+  .stat-item2 { padding: 0 0 36px 24px; }
+  .stat-item2:last-of-type { padding-bottom: 0; }
+  .statute-head { display: flex; align-items: baseline; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; }
+  .statute-num { color: var(--accent); font-size: 13px; font-weight: 700; }
+  .statute-head h3 { margin: 0; font-size: 19px; }
+  .statute-tag { font-size: 11px; color: var(--muted-2); }
+  .stat-item2 p { color: var(--muted); font-size: 13.5px; line-height: 1.8; margin: 0; max-width: 600px; }
+  blockquote.trust {
+    margin: 40px 0 0 24px;
+    padding-left: 18px;
+    border-left: 2px solid var(--accent);
+    font-family: "Source Serif 4", Georgia, serif;
+    font-style: italic;
+    font-size: 15.5px;
+    color: var(--ink);
+    max-width: 620px;
+    line-height: 1.7;
+  }
+
+  /* ---------- Live explorer ---------- */
+  .stat-row { display: flex; gap: 40px; margin-bottom: 44px; flex-wrap: wrap; }
+  .stat-item .num { font-family: "Source Serif 4", Georgia, serif; font-size: 28px; font-weight: 700; color: var(--ink); }
+  .stat-item .lbl { font-size: 11px; color: var(--muted-2); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px; }
+
+  .tab-row { display: flex; flex-wrap: wrap; gap: 18px; border-bottom: 1px solid var(--border); margin-bottom: 24px; padding-bottom: 0; }
+  .ticker-tab {
+    background: none; border: none; cursor: pointer;
+    color: var(--muted); font-family: "JetBrains Mono", monospace; font-size: 13px; font-weight: 600;
+    padding: 0 0 10px; border-bottom: 2px solid transparent;
+  }
+  .ticker-tab:hover { color: var(--ink); }
+  .ticker-tab.active { color: var(--ink); border-color: var(--accent); }
+  .status { color: var(--muted); font-size: 13px; padding: 16px 0; }
+
+  .tier-filter { display: flex; gap: 4px; margin-bottom: 22px; font-size: 12.5px; color: var(--muted); flex-wrap: wrap; }
+  .tier-btn { background: none; border: none; color: var(--muted); cursor: pointer; font-family: "JetBrains Mono", monospace; font-size: 12.5px; padding: 2px 4px; border-bottom: 1px solid transparent; }
+  .tier-btn.active { color: var(--ink); border-color: var(--accent); }
+  .tier-sep { color: var(--muted-2); }
+
+  .filings { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 22px; }
+  @media (max-width: 640px) { .filings { grid-template-columns: 1fr; } }
+  .filing-card { border: 1px solid var(--border); border-radius: 3px; padding: 14px 16px; }
+  .filing-card .label { color: var(--muted-2); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 7px; font-weight: 700; }
+  .filing-card div { font-size: 12.5px; }
+  .filing-card a { color: var(--accent); text-decoration: none; font-size: 11.5px; word-break: break-all; }
+  .filing-card a:hover { text-decoration: underline; }
+
+  .finding { border: 1px solid var(--border); border-radius: 3px; padding: 16px 18px; margin-bottom: 10px; }
+  .finding-header { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; flex-wrap: wrap; }
+  .tier-badge { font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.03em; padding: 2px 7px; border-radius: 2px; }
+  .tier-badge.high { background: rgba(193,88,74,0.14); color: var(--high); }
+  .tier-badge.medium { background: rgba(201,154,58,0.16); color: var(--medium); }
+  .tier-badge.low { background: rgba(127,168,120,0.16); color: var(--low); }
+  .item-key { color: var(--muted); font-size: 11.5px; }
+  .category { font-size: 11.5px; color: var(--muted-2); }
+  .confidence { margin-left: auto; font-size: 11px; color: var(--muted); }
+  .verified-tag { font-size: 9.5px; color: var(--low); border: 1px solid rgba(127,168,120,0.3); padding: 1px 6px; border-radius: 999px; }
+  .unverified-tag { font-size: 9.5px; color: var(--muted-2); border: 1px solid var(--border); padding: 1px 6px; border-radius: 999px; }
+  .reasoning { font-family: "Source Serif 4", Georgia, serif; font-size: 14.5px; margin-bottom: 4px; line-height: 1.6; }
+
+  details.disclosure { font-size: 12px; color: var(--muted); margin-top: 8px; }
+  details.disclosure summary { cursor: pointer; color: var(--accent); margin-bottom: 10px; font-weight: 600; list-style: none; }
+  details.disclosure summary::-webkit-details-marker { display: none; }
+  details.disclosure summary::before { content: "+ "; }
+  details.disclosure[open] summary::before { content: "- "; }
+  .excerpt { background: var(--bg); border: 1px solid var(--border); border-left: 2px solid var(--accent); border-radius: 2px; padding: 11px 13px; margin-bottom: 8px; white-space: pre-wrap; font-size: 12px; font-family: "Source Serif 4", Georgia, serif; }
+  .excerpt .which { color: var(--muted-2); font-size: 9.5px; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; font-weight: 700; font-family: "JetBrains Mono", monospace; }
+  .verifier-note { margin-top: 10px; padding-top: 10px; border-top: 1px dashed var(--border); }
+  .empty, .error { color: var(--muted); padding: 36px 0; font-size: 13px; }
+  .view-more-btn {
+    display: none;
+    background: none;
+    border: 1px solid var(--border);
     color: var(--muted);
-    padding: 40px 0;
-    text-align: center;
+    padding: 9px 16px;
+    border-radius: 3px;
+    font-size: 12.5px;
+    font-family: "JetBrains Mono", monospace;
+    cursor: pointer;
+    margin-top: 4px;
   }
+  .view-more-btn:hover { color: var(--ink); border-color: var(--accent); }
   .error { color: var(--high); }
+
+  /* ---------- Connect via Claude ---------- */
+  /* The command wraps in place instead of scrolling horizontally --
+     otherwise the copy button sits off past the right edge of a long
+     command and needs a horizontal scroll to even find. */
+  .code-block {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    padding: 12px 14px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px 14px;
+    font-size: 12px;
+    margin-bottom: 22px;
+  }
+  .code-block code { color: var(--low); flex: 1 1 240px; min-width: 0; white-space: normal; word-break: break-word; line-height: 1.6; }
+  .code-block code .flag { color: var(--accent); }
+  .copy-btn {
+    flex-shrink: 0;
+    background: none;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    padding: 6px 11px;
+    border-radius: 2px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    font-family: "JetBrains Mono", monospace;
+  }
+  .copy-btn:hover { color: var(--ink); border-color: var(--accent); }
+  .copy-btn.copied { color: var(--low); border-color: var(--low); }
+
+  .term-log { background: var(--panel); border: 1px solid var(--border); border-radius: 3px; padding: 16px 18px; margin-bottom: 30px; font-size: 12.5px; }
+  .term-log .example-tag { font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted-2); margin-bottom: 12px; }
+  .term-line { margin-bottom: 8px; white-space: pre-wrap; }
+  .term-line:last-child { margin-bottom: 0; }
+  .term-line.prompt { color: var(--muted-2); }
+  .term-line.user { color: var(--ink); }
+  .term-line.tool { color: var(--accent); padding-left: 2px; }
+  .term-line.resp { color: var(--muted); padding-left: 2px; line-height: 1.7; }
+
+  dl.tools { margin: 0; }
+  .tool-item { border-top: 1px solid var(--border); padding: 16px 0; }
+  .tool-item code.tool-name { color: var(--accent); font-size: 12.5px; font-weight: 600; }
+  .tool-item p { margin: 6px 0 0; color: var(--muted); font-size: 12.5px; line-height: 1.65; }
+
+  /* ---------- Under the hood: glossary ---------- */
+  .glossary .gloss-item { border-top: 1px solid var(--border); padding: 20px 0; }
+  .glossary p { margin: 0; font-size: 13.5px; color: var(--muted); line-height: 1.8; max-width: 600px; }
+  .glossary strong { color: var(--ink); font-weight: 600; }
+  .glossary a { color: var(--accent); text-decoration: none; border-bottom: 1px solid rgba(193,122,69,0.4); font-size: 12px; }
+  .glossary a:hover { opacity: 0.75; }
+
+  /* ---------- Footer ---------- */
+  footer { padding: 40px 0 56px; color: var(--muted-2); font-size: 12px; border-top: 1px solid var(--border); }
+  footer a { color: var(--muted); text-decoration: none; border-bottom: 1px solid var(--border); }
+  footer a:hover { color: var(--ink); }
+  footer .disclaimer { margin-top: 10px; max-width: 520px; line-height: 1.7; }
 </style>
 </head>
 <body>
-<header>
-  <h1>materiality-engine</h1>
-  <p>Material changes between a company's two most recent 10-K filings, with source citations and confidence scores.</p>
-</header>
-<main>
-  <div class="controls">
-    <select id="ticker-select" disabled>
-      <option>Loading tickers...</option>
-    </select>
-    <span class="status" id="status"></span>
+
+<nav>
+  <div class="navwrap">
+    <a href="#" class="brand"><span class="mark">&sect;</span>materiality-engine</a>
+    <div class="nav-links">
+      <a href="#how-it-works">how it works</a>
+      <a href="#explorer">live demo</a>
+      <a href="#connect">connect</a>
+      <a href="https://github.com/ritvikreddygangula/DeltaLedger-MCP" target="_blank" rel="noopener" class="always-show">github &#8599;</a>
+    </div>
   </div>
-  <div id="content"></div>
-</main>
+</nav>
+
+<section class="hero" style="border-top:none;">
+  <div class="wrap">
+    <div class="kicker">Continuous 10-K diligence</div>
+    <h1>Every material change between two filings.<br><span class="dim">Cited, not summarized.</span></h1>
+    <p class="lede">Two sequential 10-Ks, aligned section by section. Every citation checked against the source text before it's shown to you.</p>
+    <div class="hero-links">
+      <a href="#explorer" class="primary">Read a live filing &rarr;</a>
+      <span class="sep">&middot;</span>
+      <a href="#connect" class="secondary">See the MCP tools &rarr;</a>
+    </div>
+    <div class="code-block hero-cmd">
+      <code>claude mcp add <span class="flag">--transport http</span> materiality-engine https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/mcp</code>
+      <button class="copy-btn" data-copy="mcp">Copy</button>
+    </div>
+    <div class="exhibit">
+      <div class="exhibit-head">
+        <span class="exhibit-tag">Exhibit</span>
+        <span class="exhibit-meta" id="exhibit-meta">loading a real finding from the live API...</span>
+      </div>
+      <div class="exhibit-body" id="exhibit-body">&nbsp;</div>
+      <div class="exhibit-foot" id="exhibit-foot"></div>
+    </div>
+  </div>
+</section>
+
+<section id="how-it-works">
+  <div class="wrap">
+    <div class="sec-label reveal">How it works</div>
+    <h2 class="sec-title reveal">Three passes over the same two documents.</h2>
+    <p class="sec-desc reveal">Each stage hands the next only what it needs, not the whole filing.</p>
+    <div class="statute reveal">
+      <div class="stat-item2">
+        <div class="statute-head"><span class="statute-num">&sect;1</span><h3>Align</h3><span class="statute-tag">text-embedding-3-small</span></div>
+        <p>Embeds every section from both filings and finds the optimal one-to-one match by cosine similarity (the Hungarian algorithm), so a risk-factor section never gets matched against the wrong year's section by accident.</p>
+      </div>
+      <div class="stat-item2">
+        <div class="statute-head"><span class="statute-num">&sect;2</span><h3>Classify</h3><span class="statute-tag">gpt-5.4-mini</span></div>
+        <p>Reads only the lines that actually changed between filings, a local diff, not the full document, and decides what changed, why it matters, and how material it is.</p>
+      </div>
+      <div class="stat-item2">
+        <div class="statute-head"><span class="statute-num">&sect;3</span><h3>Verify</h3><span class="statute-tag">gpt-5.4-mini, adversarial prompt</span></div>
+        <p>First, a free, deterministic check: is the cited quote a real, verbatim substring of the filing? Only quotes that pass reach a second, skeptical model whose only job is catching overclaiming.</p>
+      </div>
+    </div>
+    <blockquote class="trust reveal">A hallucinated quote never reaches a user. It fails the verbatim check before any second opinion is even asked for, and the failure itself is recorded, not hidden.</blockquote>
+  </div>
+</section>
+
+<section id="explorer">
+  <div class="wrap">
+    <div class="sec-label reveal">Live demo</div>
+    <h2 class="sec-title reveal">Real findings, real filings</h2>
+    <p class="sec-desc reveal">Every number below comes from the live API right now.</p>
+    <div class="stat-row reveal">
+      <div class="stat-item"><div class="num" id="stat-companies">--</div><div class="lbl">Companies covered</div></div>
+      <div class="stat-item"><div class="num" id="stat-findings">--</div><div class="lbl">Findings extracted</div></div>
+      <div class="stat-item"><div class="num" id="stat-verified">--</div><div class="lbl">Citation-verified</div></div>
+    </div>
+    <div class="tab-row reveal" id="ticker-row"><span class="status">Loading tickers...</span></div>
+    <div class="tier-filter reveal" id="tier-filter" style="display:none;">
+      <button class="tier-btn active" data-tier="all">all</button><span class="tier-sep">/</span>
+      <button class="tier-btn" data-tier="high">high</button><span class="tier-sep">/</span>
+      <button class="tier-btn" data-tier="medium">medium</button><span class="tier-sep">/</span>
+      <button class="tier-btn" data-tier="low">low</button>
+    </div>
+    <div id="content" class="reveal"></div>
+  </div>
+</section>
+
+<section id="connect">
+  <div class="wrap">
+    <div class="sec-label reveal">Connect via Claude</div>
+    <h2 class="sec-title reveal">Point any MCP client at it</h2>
+    <p class="sec-desc reveal">Same backend the demo above uses, exposed as three MCP tools over the Streamable HTTP transport.</p>
+    <div class="reveal">
+      <div class="code-block">
+        <code>claude mcp add <span class="flag">--transport http</span> materiality-engine https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/mcp</code>
+        <button class="copy-btn" data-copy="mcp">Copy</button>
+      </div>
+      <div class="term-log">
+        <div class="example-tag">Example session (illustrative, not a live embed)</div>
+        <div class="term-line prompt">$ claude</div>
+        <div class="term-line user">&gt; what changed in apple's most recent 10-k?</div>
+        <div class="term-line tool">&#9679; get_materiality_report("AAPL")</div>
+        <div class="term-line resp">16 findings. The highest-tier one is a new U.S. court order restricting App Store commissions. Every excerpt returned is a verbatim quote from the filing, checked before it's shown to you.</div>
+      </div>
+      <dl class="tools">
+        <div class="tool-item">
+          <code class="tool-name">list_tickers()</code>
+          <p>Lists the curated tickers with cached materiality analysis available.</p>
+        </div>
+        <div class="tool-item">
+          <code class="tool-name">get_materiality_report(ticker)</code>
+          <p>Returns a ticker's two most recent 10-K filings plus every finding: category, materiality tier, reasoning, confidence, and source excerpts.</p>
+        </div>
+        <div class="tool-item">
+          <code class="tool-name">get_finding_citation(finding_id)</code>
+          <p>Returns a single finding's full detail (source citation, confidence, reasoning) by its id.</p>
+        </div>
+      </dl>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <div class="sec-label reveal">Under the hood</div>
+    <h2 class="sec-title reveal">Built like it has to be trusted</h2>
+    <div class="glossary reveal">
+      <div class="gloss-item">
+        <p><strong>Verified citations.</strong> Two-layer check: a free verbatim-substring test, then an independent, adversarial model audit before any claim is trusted. <a href="https://github.com/ritvikreddygangula/DeltaLedger-MCP/blob/main/src/agents/verifier.py" target="_blank" rel="noopener">source &rarr;</a></p>
+      </div>
+      <div class="gloss-item">
+        <p><strong>Evaluated on every pull request.</strong> CI runs the real pipeline against a golden set of known filing pairs and fails the build if precision or recall drops below a floor, so a prompt or model change that quietly regresses accuracy can't ship. <a href="https://github.com/ritvikreddygangula/DeltaLedger-MCP/blob/main/tests/eval/test_golden_set_eval.py" target="_blank" rel="noopener">source &rarr;</a></p>
+      </div>
+      <div class="gloss-item">
+        <p><strong>Guardrails over confidence.</strong> A quote that fails verbatim verification is automatically downgraded to a low materiality tier rather than left at whatever score the model claimed, and a malformed model response degrades to zero findings for that pair instead of crashing the run. <a href="https://github.com/ritvikreddygangula/DeltaLedger-MCP/blob/main/src/agents/classifier.py" target="_blank" rel="noopener">source &rarr;</a></p>
+      </div>
+      <div class="gloss-item">
+        <p><strong>Cost-optimized pipeline.</strong> Local line-diffing and content-hash caching cut redundant LLM spend before a single token is billed. <a href="https://github.com/ritvikreddygangula/DeltaLedger-MCP/blob/main/src/agents/diffing.py" target="_blank" rel="noopener">source &rarr;</a></p>
+      </div>
+      <div class="gloss-item">
+        <p><strong>Structured observability.</strong> Every stage, every OpenAI call, every request logs structured JSON, queryable directly in CloudWatch Logs Insights. <a href="https://github.com/ritvikreddygangula/DeltaLedger-MCP/blob/main/src/observability.py" target="_blank" rel="noopener">source &rarr;</a></p>
+      </div>
+      <div class="gloss-item">
+        <p><strong>CI security scanning.</strong> Dependency vulnerability scanning and committed-secret scanning run on every push and pull request. <a href="https://github.com/ritvikreddygangula/DeltaLedger-MCP/blob/main/.github/workflows/ci.yml" target="_blank" rel="noopener">source &rarr;</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <a href="https://github.com/ritvikreddygangula/DeltaLedger-MCP" target="_blank" rel="noopener">View source on GitHub</a>
+    <p class="disclaimer">materiality-engine surfaces and verifies what changed between SEC filings and why it might matter. It does not make buy, sell, or investment decisions.</p>
+  </div>
+</footer>
 
 <script>
   // Hardcoded on purpose: this is a single-environment personal project with
-  // no build step, not a multi-environment deployment -- see PROGRESS.md,
-  // Part 7. Update this if the API stack is ever redeployed under a new URL.
+  // no build step, not a multi-environment deployment. Update this if the
+  // API stack is ever redeployed under a new URL.
   const API_BASE = "https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/api";
 
-  const selectEl = document.getElementById("ticker-select");
-  const statusEl = document.getElementById("status");
+  // list_curated_tickers currently returns every ticker with an ingested
+  // filing, not just ones with real findings -- a couple of filers (JPM,
+  // Visa) are ingested but structurally can't be parsed into real content
+  // (documented, known limitation). Filtered client-side until the backend
+  // excludes them at the source.
+  const KNOWN_EMPTY_TICKERS = new Set(["JPM", "V"]);
+
+  const tickerRowEl = document.getElementById("ticker-row");
+  const tierFilterEl = document.getElementById("tier-filter");
   const contentEl = document.getElementById("content");
+  const exhibitMetaEl = document.getElementById("exhibit-meta");
+  const exhibitBodyEl = document.getElementById("exhibit-body");
+  const exhibitFootEl = document.getElementById("exhibit-foot");
+
+  let allReports = {};
+  let currentTierFilter = "all";
 
   function tierClass(tier) {
     const t = (tier || "").toLowerCase();
@@ -193,6 +486,85 @@
     const div = document.createElement("div");
     div.textContent = s == null ? "" : String(s);
     return div.innerHTML;
+  }
+
+  function truncate(s, n) {
+    if (!s) return "";
+    return s.length > n ? s.slice(0, n).trim() + "..." : s;
+  }
+
+  // Sentence-level diff (LCS-based) between two excerpts, used to render
+  // the hero exhibit as a real redline instead of a decorative mockup. Word
+  // -level diffing was tried first but reads as fragmented word-salad on
+  // real filing prose, which is often substantively rewritten sentence by
+  // sentence rather than lightly edited -- a legal redline swaps whole
+  // clauses, not scattered words, so this diffs at sentence granularity.
+  function splitSentences(text) {
+    return text
+      .split(/(?<=[.!?])\s+(?=[A-Z0-9(])/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  }
+
+  function diffArr(a, b) {
+    const n = a.length, m = b.length;
+    const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+    for (let i = n - 1; i >= 0; i--) {
+      for (let j = m - 1; j >= 0; j--) {
+        dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+      }
+    }
+    const ops = [];
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (a[i] === b[j]) { ops.push({ type: "equal", text: a[i] }); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { ops.push({ type: "removed", text: a[i] }); i++; }
+      else { ops.push({ type: "added", text: b[j] }); j++; }
+    }
+    while (i < n) { ops.push({ type: "removed", text: a[i] }); i++; }
+    while (j < m) { ops.push({ type: "added", text: b[j] }); j++; }
+    return ops;
+  }
+
+  // Merge consecutive same-type sentences into runs, then collapse long
+  // unchanged runs down to a sentence of context around each change --
+  // otherwise a one-sentence edit renders as two full paragraphs of mostly
+  // identical text.
+  function trimDiff(ops, contextSentences = 1, collapseAt = 3) {
+    const runs = [];
+    for (const op of ops) {
+      const last = runs[runs.length - 1];
+      if (last && last.type === op.type) last.items.push(op.text);
+      else runs.push({ type: op.type, items: [op.text] });
+    }
+    const changeIdxs = runs.map((r, idx) => (r.type !== "equal" ? idx : -1)).filter((idx) => idx !== -1);
+    if (changeIdxs.length === 0) return runs.map((r) => ({ type: r.type, text: r.items.join(" ") }));
+    const first = changeIdxs[0], last = changeIdxs[changeIdxs.length - 1];
+    return runs.map((r, idx) => {
+      if (r.type !== "equal") return { type: r.type, text: r.items.join(" ") };
+      if (r.items.length <= collapseAt) return { type: "equal", text: r.items.join(" ") };
+      const isBeforeFirst = idx < first;
+      const isAfterLast = idx > last;
+      if (isBeforeFirst && !isAfterLast) return { type: "equal", text: "... " + r.items.slice(-contextSentences).join(" ") };
+      if (isAfterLast && !isBeforeFirst) return { type: "equal", text: r.items.slice(0, contextSentences).join(" ") + " ..." };
+      return { type: "equal", text: r.items.slice(0, contextSentences).join(" ") + " ... " + r.items.slice(-contextSentences).join(" ") };
+    });
+  }
+
+  function renderDiffHtml(oldStr, newStr) {
+    const runs = trimDiff(diffArr(splitSentences(oldStr), splitSentences(newStr)));
+    // Cap each run's rendered length -- a single real sentence can run 300+
+    // characters, and a redline meant to be read at a glance shouldn't force
+    // several lines of scroll for one changed clause.
+    return runs
+      .map((r) => {
+        const cap = r.type === "equal" ? 140 : 220;
+        const t = escapeHtml(truncate(r.text, cap));
+        if (r.type === "removed") return `<del>${t}</del> `;
+        if (r.type === "added") return `<ins>${t}</ins> `;
+        return t + " ";
+      })
+      .join("");
   }
 
   function renderFiling(label, filing) {
@@ -207,77 +579,257 @@
 
   function renderFinding(f) {
     const confidencePct = f.confidence != null ? Math.round(f.confidence * 100) + "%" : "n/a";
+    const verifiedTag = f.excerpt_verified
+      ? `<span class="verified-tag">quote verified</span>`
+      : `<span class="unverified-tag">quote unverified</span>`;
     return `
-      <div class="finding">
+      <div class="finding" data-tier="${escapeHtml(tierClass(f.final_tier || f.tier))}">
         <div class="finding-header">
-          <span class="tier ${tierClass(f.final_tier || f.tier)}">${escapeHtml(f.final_tier || f.tier)}</span>
+          <span class="tier-badge ${tierClass(f.final_tier || f.tier)}">${escapeHtml(f.final_tier || f.tier)}</span>
           <span class="item-key">Item ${escapeHtml(f.item_key)}</span>
           <span class="category">${escapeHtml(f.category)}</span>
+          ${verifiedTag}
           <span class="confidence">confidence ${confidencePct}</span>
         </div>
         <div class="reasoning">${escapeHtml(f.reasoning)}</div>
-        <details>
+        <details class="disclosure">
           <summary>Source excerpts &amp; verifier reasoning</summary>
           ${f.older_excerpt ? `<div class="excerpt"><div class="which">Older filing</div>${escapeHtml(f.older_excerpt)}</div>` : ""}
           ${f.newer_excerpt ? `<div class="excerpt"><div class="which">Newer filing</div>${escapeHtml(f.newer_excerpt)}</div>` : ""}
-          ${f.verifier_reasoning ? `<div style="margin-top:8px;">${escapeHtml(f.verifier_reasoning)}</div>` : ""}
+          ${f.verifier_reasoning ? `<div class="verifier-note">${escapeHtml(f.verifier_reasoning)}</div>` : ""}
         </details>
       </div>
     `;
   }
 
+  const FINDINGS_LIMIT = 4;
+  let showAllFindings = false;
+
+  // Combines the tier filter with a show-first-N limit so a 30-finding
+  // company doesn't force a long scroll just to reach "how it works" --
+  // matching cards beyond the limit stay in the DOM (so "view more" is
+  // instant) but are hidden until the button is clicked.
+  function applyTierFilter() {
+    const cards = Array.from(contentEl.querySelectorAll(".finding"));
+    const matching = cards.filter(
+      (card) => currentTierFilter === "all" || card.dataset.tier === currentTierFilter
+    );
+    cards.forEach((card) => (card.style.display = "none"));
+    const visible = showAllFindings ? matching : matching.slice(0, FINDINGS_LIMIT);
+    visible.forEach((card) => (card.style.display = ""));
+
+    const viewMoreBtn = document.getElementById("view-more-findings");
+    if (!viewMoreBtn) return;
+    const remaining = matching.length - visible.length;
+    if (remaining > 0) {
+      viewMoreBtn.style.display = "inline-block";
+      viewMoreBtn.textContent = `View ${remaining} more finding${remaining === 1 ? "" : "s"} ↓`;
+    } else {
+      viewMoreBtn.style.display = "none";
+    }
+  }
+
   function renderReport(report) {
+    showAllFindings = false;
     if (report.findings.length === 0) {
+      tierFilterEl.style.display = "none";
       contentEl.innerHTML = `<div class="empty">No material findings between these two filings.</div>`;
       return;
     }
-    const filingsHtml = `
+    tierFilterEl.style.display = "flex";
+    contentEl.innerHTML = `
       <div class="filings">
         ${renderFiling("Older filing", report.older_filing)}
         ${renderFiling("Newer filing", report.newer_filing)}
       </div>
+      ${report.findings.map(renderFinding).join("")}
+      <button class="view-more-btn" id="view-more-findings" type="button"></button>
     `;
-    const findingsHtml = report.findings.map(renderFinding).join("");
-    contentEl.innerHTML = filingsHtml + findingsHtml;
+    applyTierFilter();
   }
 
-  async function loadReport(ticker) {
-    statusEl.textContent = "Loading report...";
-    contentEl.innerHTML = "";
-    try {
-      const res = await fetch(`${API_BASE}/reports/${encodeURIComponent(ticker)}`);
-      if (!res.ok) {
-        throw new Error(`API returned ${res.status}`);
-      }
-      const report = await res.json();
-      statusEl.textContent = "";
-      renderReport(report);
-    } catch (err) {
-      statusEl.textContent = "";
-      contentEl.innerHTML = `<div class="error">Failed to load report: ${escapeHtml(err.message)}</div>`;
+  function selectTicker(ticker) {
+    document.querySelectorAll(".ticker-tab").forEach((tab) => {
+      tab.classList.toggle("active", tab.dataset.ticker === ticker);
+    });
+    renderReport(allReports[ticker]);
+  }
+
+  function animateCount(el, target, suffix) {
+    const duration = 800;
+    const start = performance.now();
+    function tick(now) {
+      const progress = Math.min((now - start) / duration, 1);
+      const eased = 1 - Math.pow(1 - progress, 3);
+      el.textContent = Math.round(eased * target) + (suffix || "");
+      if (progress < 1) requestAnimationFrame(tick);
     }
+    requestAnimationFrame(tick);
+  }
+
+  function renderExhibit(ticker, finding, olderFiling, newerFiling) {
+    exhibitMetaEl.textContent = `${ticker} · Item ${finding.item_key} · ${olderFiling.filing_date} → ${newerFiling.filing_date}`;
+    if (finding.older_excerpt && finding.newer_excerpt) {
+      exhibitBodyEl.innerHTML = renderDiffHtml(finding.older_excerpt, finding.newer_excerpt);
+    } else {
+      exhibitBodyEl.textContent = finding.newer_excerpt || finding.older_excerpt || finding.reasoning;
+    }
+    const verified = finding.excerpt_verified;
+    exhibitFootEl.innerHTML = `
+      <span class="tier-badge ${tierClass(finding.final_tier || finding.tier)}">${escapeHtml(finding.final_tier || finding.tier)}</span>
+      ${verified ? `<span class="verified-tag">quote verified</span>` : `<span class="unverified-tag">quote unverified</span>`}
+      <span>${escapeHtml(truncate(finding.reasoning, 130))}</span>
+    `;
   }
 
   async function init() {
     try {
-      const res = await fetch(`${API_BASE}/tickers`);
-      if (!res.ok) {
-        throw new Error(`API returned ${res.status}`);
+      const tickersRes = await fetch(`${API_BASE}/tickers`);
+      if (!tickersRes.ok) throw new Error(`API returned ${tickersRes.status}`);
+      const tickers = (await tickersRes.json()).filter((t) => !KNOWN_EMPTY_TICKERS.has(t));
+
+      const reports = await Promise.all(
+        tickers.map((t) =>
+          fetch(`${API_BASE}/reports/${encodeURIComponent(t)}`)
+            .then((r) => (r.ok ? r.json() : null))
+            .catch(() => null)
+        )
+      );
+
+      let totalFindings = 0;
+      let totalVerified = 0;
+      reports.forEach((report, i) => {
+        if (report && report.findings && report.findings.length > 0) {
+          allReports[tickers[i]] = report;
+          totalFindings += report.findings.length;
+          totalVerified += report.findings.filter((f) => f.excerpt_verified).length;
+        }
+      });
+
+      const liveTickers = Object.keys(allReports).sort();
+      if (liveTickers.length === 0) {
+        tickerRowEl.innerHTML = `<span class="status">No companies available right now.</span>`;
+        exhibitMetaEl.textContent = "no live data available";
+        return;
       }
-      const tickers = await res.json();
-      selectEl.innerHTML = tickers.map((t) => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join("");
-      selectEl.disabled = false;
-      selectEl.addEventListener("change", () => loadReport(selectEl.value));
-      if (tickers.length > 0) {
-        loadReport(tickers[0]);
+
+      tickerRowEl.innerHTML = liveTickers
+        .map((t) => `<button class="ticker-tab" data-ticker="${escapeHtml(t)}">${escapeHtml(t)}</button>`)
+        .join("");
+      tickerRowEl.querySelectorAll(".ticker-tab").forEach((tab) => {
+        tab.addEventListener("click", () => selectTicker(tab.dataset.ticker));
+      });
+
+      tierFilterEl.querySelectorAll(".tier-btn").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          tierFilterEl.querySelectorAll(".tier-btn").forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          currentTierFilter = btn.dataset.tier;
+          showAllFindings = false;
+          applyTierFilter();
+        });
+      });
+
+      // Event delegation: the "view more" button is recreated on every
+      // renderReport() call (ticker switch), so it can't be wired up once.
+      contentEl.addEventListener("click", (e) => {
+        if (e.target.id === "view-more-findings") {
+          showAllFindings = true;
+          applyTierFilter();
+        }
+      });
+
+      selectTicker(liveTickers[0]);
+
+      // Prefer a verified, high-tier finding with both excerpts present and
+      // a reasonable length, so the redline reads as a clean example rather
+      // than a wall of text; fall back progressively.
+      const candidates = [];
+      for (const t of liveTickers) {
+        for (const f of allReports[t].findings) {
+          if (f.older_excerpt && f.newer_excerpt) candidates.push({ ticker: t, finding: f });
+        }
       }
+      let best =
+        candidates.find(
+          (c) =>
+            c.finding.excerpt_verified &&
+            (c.finding.final_tier || c.finding.tier) === "high" &&
+            c.finding.older_excerpt.length < 700 &&
+            c.finding.newer_excerpt.length < 700
+        ) ||
+        candidates.find((c) => c.finding.excerpt_verified) ||
+        candidates[0];
+
+      if (best) {
+        const report = allReports[best.ticker];
+        renderExhibit(best.ticker, best.finding, report.older_filing, report.newer_filing);
+      } else {
+        exhibitMetaEl.textContent = "no finding with both excerpts available right now";
+      }
+
+      const verifiedPct = totalFindings > 0 ? Math.round((totalVerified / totalFindings) * 100) : 0;
+      const statEls = [
+        [document.getElementById("stat-companies"), liveTickers.length, ""],
+        [document.getElementById("stat-findings"), totalFindings, "+"],
+        [document.getElementById("stat-verified"), verifiedPct, "%"],
+      ];
+      const statObserver = new IntersectionObserver(
+        (entries) => {
+          entries.forEach((entry) => {
+            if (entry.isIntersecting) {
+              statEls.forEach(([el, val, suffix]) => animateCount(el, val, suffix));
+              statObserver.disconnect();
+            }
+          });
+        },
+        { threshold: 0.4 }
+      );
+      statObserver.observe(document.querySelector(".stat-row"));
     } catch (err) {
-      selectEl.innerHTML = `<option>Failed to load</option>`;
-      contentEl.innerHTML = `<div class="error">Failed to load tickers: ${escapeHtml(err.message)}</div>`;
+      tickerRowEl.innerHTML = "";
+      contentEl.innerHTML = `<div class="error">Failed to load live data: ${escapeHtml(err.message)}</div>`;
+      exhibitMetaEl.textContent = "failed to load live data";
     }
   }
 
+  function initReveal() {
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add("visible");
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.15 }
+    );
+    document.querySelectorAll(".reveal").forEach((el) => observer.observe(el));
+  }
+
+  function initCopyButtons() {
+    const command = "claude mcp add --transport http materiality-engine https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/mcp";
+    document.querySelectorAll('.copy-btn[data-copy="mcp"]').forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        try {
+          await navigator.clipboard.writeText(command);
+          btn.textContent = "Copied!";
+          btn.classList.add("copied");
+        } catch {
+          btn.textContent = "Select & copy";
+        }
+        setTimeout(() => {
+          btn.textContent = "Copy";
+          btn.classList.remove("copied");
+        }, 1800);
+      });
+    });
+  }
+
   init();
+  initReveal();
+  initCopyButtons();
 </script>
 </body>
 </html>
