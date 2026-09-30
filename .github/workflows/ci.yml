@@ -75,8 +75,13 @@ jobs:
       - name: Set up Python
         run: uv python install
 
+      # --group eval on top of the default groups (dev, pipeline) --
+      # ragas isn't in default-groups (see docs/RAGAS_EVAL_SPEC.md: it's
+      # real weight -- transitive langchain/datasets/pandas deps -- with
+      # nothing to do with the deployed Lambda or normal dev work), but
+      # this job's own test now asserts a faithfulness floor and needs it.
       - name: Install dependencies
-        run: uv sync
+        run: uv sync --group eval
 
       - name: Run eval harness against golden set
         env:

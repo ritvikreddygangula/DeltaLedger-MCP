@@ -23,6 +23,11 @@ dev = [
     "pytest>=9.1.1",
     "ruff>=0.16.6",
 ]
+eval = [
+    "langchain-community==0.3.31",
+    "pillow>=12.3.0",
+    "ragas==0.3.1",
+]
 pipeline = [
     "beautifulsoup4>=4.15.0",
     "langgraph>=1.2.11",
