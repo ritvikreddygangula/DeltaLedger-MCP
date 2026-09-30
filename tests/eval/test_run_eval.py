@@ -39,7 +39,7 @@ def test_report_includes_ragas_scores_section():
     case_scores = [(_case(), [SectionScore("1A", "tp", 0.9)])]
     ragas_report = RagasReport(faithfulness=0.83, answer_correctness=0.61, n_samples=5)
 
-    text = format_report(_report(), case_scores, ragas_report)
+    text = format_report(_report(), case_scores, ragas_report, {})
 
     assert "## Ragas scores" in text
     assert "Faithfulness: 83%" in text
@@ -54,8 +54,24 @@ def test_report_handles_no_ragas_samples():
     case_scores = [(_case(), [])]
     ragas_report = RagasReport(faithfulness=None, answer_correctness=None, n_samples=0)
 
-    text = format_report(_report(), case_scores, ragas_report)
+    text = format_report(_report(), case_scores, ragas_report, {})
 
     assert "Faithfulness: N/A" in text
     assert "Answer correctness: N/A" in text
     assert "Scored over 0 finding(s)" in text
+
+
+def test_report_includes_baseline_comparison_section():
+    case_scores = [(_case(), [SectionScore("1A", "tp", 0.9)])]
+    ragas_report = RagasReport(faithfulness=None, answer_correctness=None, n_samples=0)
+    baseline_reports = {
+        "always_flag": _report(precision=0.3, recall=1.0),
+        "diff_size": _report(precision=0.5, recall=0.6),
+    }
+
+    text = format_report(_report(), case_scores, ragas_report, baseline_reports)
+
+    assert "## Baseline comparison" in text
+    assert "| Pipeline | 80% | 75% |" in text
+    assert "| always_flag | 30% | 100% |" in text
+    assert "| diff_size | 50% | 60% |" in text
