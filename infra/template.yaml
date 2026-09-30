@@ -2,18 +2,16 @@ AWSTemplateFormatVersion: "2010-09-09"
 Transform: AWS::Serverless-2016-10-31
 Description: >
   materiality-engine -- read-only REST API + MCP server serving cached
-  materiality findings for curated tickers. No pipeline, no job queue: every
-  request is a Postgres read against results the CLI scripts already
-  computed and stored.
+  materiality findings for curated tickers. No pipeline, no job queue, no
+  database: every request is an S3 read against results
+  scripts/export_to_s3.py already published (see docs/DROP_RDS_SPEC.md).
 
 Parameters:
-  DatabaseUrl:
+  DataBucketName:
     Type: String
-    NoEcho: true
     Description: >
-      Postgres connection string for the RDS instance, including
-      sslmode=require, e.g.
-      postgresql://user:pass@host:5432/materiality?sslmode=require
+      Name of the S3 bucket scripts/export_to_s3.py publishes ticker
+      reports ({ticker}.json, _index.json) to.
 
 Globals:
   Function:
@@ -30,16 +28,35 @@ Resources:
       # The Makefile lives at the repo root (CodeUri) per SAM's convention
       # for BuildMethod: makefile. It installs infra/requirements.txt --
       # deliberately API-only deps, not the full pipeline dependency group
-      # -- and copies in src/. psycopg[binary] ships a compiled C extension,
-      # but pip can fetch a prebuilt manylinux wheel for Lambda's runtime
-      # directly (see Makefile), so no Docker/--use-container is needed.
+      # -- and copies in src/. psycopg[binary]'s compiled extension (the
+      # original reason for this Makefile's manylinux-wheel-fetching
+      # approach) is gone, but `cryptography` (a transitive dep via
+      # `mcp` -> `pyjwt`) is also a compiled C extension, so the same
+      # manylinux-wheel approach is still genuinely needed here, not a
+      # leftover -- confirmed by checking infra/requirements.txt directly
+      # rather than assuming boto3 made every dependency pure Python.
       BuildMethod: makefile
     Properties:
       CodeUri: ../
       Handler: src.api.lambda_handler.handler
       Environment:
         Variables:
-          DATABASE_URL: !Ref DatabaseUrl
+          S3_BUCKET: !Ref DataBucketName
+      # Explicit statements, not a SAM policy-template shorthand (e.g.
+      # S3ReadPolicy) -- that template only grants s3:GetObject on the
+      # object ARN, not s3:ListBucket on the bucket ARN that
+      # list_curated_tickers()'s list_objects_v2 and /health's head_bucket
+      # both need. Verify against real CloudWatch logs after the first
+      # deploy, same as every other AWS-permissions assumption in this
+      # project (see docs/DESIGN_NOTES.md's Lambda cold-start entries).
+      Policies:
+        - Statement:
+            - Effect: Allow
+              Action: s3:GetObject
+              Resource: !Sub "arn:aws:s3:::${DataBucketName}/*"
+            - Effect: Allow
+              Action: s3:ListBucket
+              Resource: !Sub "arn:aws:s3:::${DataBucketName}"
       Events:
         AnyRequest:
           Type: HttpApi
