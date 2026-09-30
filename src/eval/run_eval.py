@@ -7,14 +7,25 @@ CI-marked test with a threshold-based pass/fail.
 Usage: uv run python -m src.eval.run_eval
 """
 
+from __future__ import annotations
+
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from dotenv import load_dotenv
 
 from ..agents.graph import build_graph
+from ..agents.verifier import VerifiedFinding
 from .golden_set import GoldenSetCase, load_golden_set
 from .scoring import EvalReport, SectionScore, aggregate_scores, score_case
+
+if TYPE_CHECKING:
+    # Only for the type hint below -- ragas_scoring pulls in the "eval" uv
+    # dependency group (ragas itself), not installed by default. See the
+    # local import inside run_eval() for why this can't be a normal
+    # top-level import.
+    from .ragas_scoring import RagasReport
 
 GOLDEN_SET_DIR = Path(__file__).resolve().parent.parent.parent / "tests/fixtures/eval_golden_set"
 REPORT_PATH = Path(__file__).resolve().parent.parent.parent / "EVAL_REPORT.md"
@@ -56,7 +67,7 @@ KNOWN_LIMITATIONS = """## Known limitations
 """
 
 
-def run_case(case: GoldenSetCase) -> list[SectionScore]:
+def run_case(case: GoldenSetCase) -> tuple[list[SectionScore], list[VerifiedFinding]]:
     graph = build_graph()
     result = graph.invoke(
         {
@@ -64,23 +75,39 @@ def run_case(case: GoldenSetCase) -> list[SectionScore]:
             "newer_sections": case.newer_filing["sections"],
         }
     )
-    return score_case(case.ground_truth, result["verified_findings"])
+    verified_findings = result["verified_findings"]
+    return score_case(case.ground_truth, verified_findings), verified_findings
 
 
 def run_eval(
     golden_set_dir: Path = GOLDEN_SET_DIR,
-) -> tuple[EvalReport, list[tuple[GoldenSetCase, list[SectionScore]]]]:
+) -> tuple[EvalReport, list[tuple[GoldenSetCase, list[SectionScore]]], RagasReport]:
+    # Local, not top-level -- see the TYPE_CHECKING import above.
+    from .ragas_scoring import build_ragas_samples, score_with_ragas
+
     load_dotenv()  # pytest doesn't load .env automatically the way our scripts do
     cases = load_golden_set(golden_set_dir)
     with ThreadPoolExecutor(max_workers=CASE_MAX_WORKERS) as executor:
         # executor.map preserves input order in its output regardless of
         # which case finishes first, so zip(cases, ...) still pairs each
-        # case with its own scores correctly.
-        score_lists = list(executor.map(run_case, cases))
-    case_scores = list(zip(cases, score_lists))
+        # case with its own results correctly.
+        results = list(executor.map(run_case, cases))
+    case_scores = [(case, scores) for case, (scores, _) in zip(cases, results)]
     all_scores = [score for _, scores in case_scores for score in scores]
     report = aggregate_scores(all_scores)
-    return report, case_scores
+
+    # Same findings already produced above, not a second pipeline run --
+    # scoring faithfulness/answer-correctness against a re-run would compare
+    # against different (LLM output isn't fully deterministic) findings than
+    # what precision/recall was just computed from.
+    ragas_samples = [
+        sample
+        for case, (_, verified_findings) in zip(cases, results)
+        for sample in build_ragas_samples(case, verified_findings)
+    ]
+    ragas_report: RagasReport = score_with_ragas(ragas_samples)
+
+    return report, case_scores, ragas_report
 
 
 def _pct(value: float | None) -> str:
@@ -97,7 +124,9 @@ def _note_for(case: GoldenSetCase, item_key: str) -> str:
 
 
 def format_report(
-    report: EvalReport, case_scores: list[tuple[GoldenSetCase, list[SectionScore]]]
+    report: EvalReport,
+    case_scores: list[tuple[GoldenSetCase, list[SectionScore]]],
+    ragas_report: RagasReport,
 ) -> str:
     total = report.tp + report.fp + report.fn + report.tn
     lines = [
@@ -119,6 +148,19 @@ def format_report(
         "(True positives should score meaningfully higher than false positives on"
         " average -- that's what makes 'confidence' a real signal rather than a"
         " number an LLM made up.)",
+        "",
+        "## Ragas scores",
+        "",
+        f"- Faithfulness: {_pct(ragas_report.faithfulness)}",
+        f"- Answer correctness: {_pct(ragas_report.answer_correctness)}",
+        f"- Scored over {ragas_report.n_samples} finding(s) (the TP cases above -- "
+        "sections with an expected, credible finding to score)",
+        "",
+        "(Faithfulness checks whether a finding's reasoning is actually grounded in"
+        " the diffed section text the classifier saw, independent of and at finer"
+        " grain than the Verifier's own verbatim-excerpt check. Answer correctness"
+        " compares that reasoning against this golden set's hand-written ground-truth"
+        " note. See docs/RAGAS_EVAL_SPEC.md.)",
         "",
         "## Per-case results",
         "",
@@ -159,11 +201,16 @@ def format_report(
 
 
 def main() -> None:
-    report, case_scores = run_eval()
-    REPORT_PATH.write_text(format_report(report, case_scores), encoding="utf-8")
+    report, case_scores, ragas_report = run_eval()
+    REPORT_PATH.write_text(format_report(report, case_scores, ragas_report), encoding="utf-8")
     print(f"Precision: {_pct(report.precision)}  Recall: {_pct(report.recall)}")
     print(f"TP={report.tp} FP={report.fp} FN={report.fn} TN={report.tn}")
     print(f"Avg confidence TP={_confidence(report.avg_confidence_tp)} FP={_confidence(report.avg_confidence_fp)}")
+    print(
+        f"Ragas faithfulness={_pct(ragas_report.faithfulness)} "
+        f"answer_correctness={_pct(ragas_report.answer_correctness)} "
+        f"(n={ragas_report.n_samples})"
+    )
     print(f"Report written to {REPORT_PATH}")
 
 

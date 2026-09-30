@@ -18,7 +18,7 @@ RECALL_FLOOR = 0.4
 
 @pytest.mark.eval
 def test_golden_set_eval_meets_threshold():
-    report, _case_scores = run_eval()
+    report, _case_scores, _ragas_report = run_eval()
 
     print(
         f"\nPrecision: {report.precision:.0%}  Recall: {report.recall:.0%}  "
