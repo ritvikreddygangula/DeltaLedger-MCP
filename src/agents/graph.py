@@ -1,9 +1,9 @@
 import dataclasses
 import json
+import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from typing import Callable
 
-import psycopg
 from langgraph.graph import END, START, StateGraph
 
 from ..embeddings.openai_client import get_embeddings
@@ -133,7 +133,7 @@ def _classify_cache_key(alignment: SectionAlignment) -> str:
     )
 
 
-def _cached_classify(classify_fn: ClassifyFn, conn: psycopg.Connection) -> ClassifyFn:
+def _cached_classify(classify_fn: ClassifyFn, conn: sqlite3.Connection) -> ClassifyFn:
     def wrapped(alignment: SectionAlignment) -> list[Finding]:
         item_key = (alignment.older_section or alignment.newer_section)["item_key"]
         key = _classify_cache_key(alignment)
@@ -172,7 +172,7 @@ def _verified_finding_from_dict(d: dict) -> VerifiedFinding:
     return VerifiedFinding(**{**d, "finding": Finding(**d["finding"])})
 
 
-def _cached_verify(verify_fn: VerifyFn, conn: psycopg.Connection) -> VerifyFn:
+def _cached_verify(verify_fn: VerifyFn, conn: sqlite3.Connection) -> VerifyFn:
     def wrapped(findings: list[Finding], alignment: SectionAlignment) -> list[VerifiedFinding]:
         item_key = (alignment.older_section or alignment.newer_section)["item_key"]
         key = _verify_cache_key(findings, alignment)
@@ -197,7 +197,7 @@ def build_graph(
     classify_fn: ClassifyFn = classify_alignment,
     verify_fn: VerifyFn = verify_findings_for_alignment,
     threshold: float = DEFAULT_MATCH_THRESHOLD,
-    cache_conn: psycopg.Connection | None = None,
+    cache_conn: sqlite3.Connection | None = None,
 ):
     if cache_conn is not None:
         classify_fn = _cached_classify(classify_fn, cache_conn)

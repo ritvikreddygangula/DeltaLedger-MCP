@@ -42,9 +42,9 @@ uv sync
 cp .env.example .env
 ```
 
-Fill in your own `.env`: `OPENAI_API_KEY` (yours, every analysis run below bills to it), `DATABASE_URL` (a Postgres instance), and `EDGAR_USER_AGENT` (SEC EDGAR requires an identifying string on every request, e.g. `"Your Name your@email.com"`).
+Fill in your own `.env`: `OPENAI_API_KEY` (yours, every analysis run below bills to it) and `EDGAR_USER_AGENT` (SEC EDGAR requires an identifying string on every request, e.g. `"Your Name your@email.com"`). No database setup needed -- ingestion writes to a local SQLite file created automatically on first run.
 
-Add a company to your own database:
+Add a company to your own local database:
 
 ```bash
 uv run python -m scripts.ingest_ticker AAPL   # pulls the last 2 10-Ks from SEC EDGAR, free
