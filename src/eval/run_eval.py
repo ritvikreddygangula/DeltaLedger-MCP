@@ -17,6 +17,7 @@ from dotenv import load_dotenv
 
 from ..agents.graph import build_graph
 from ..agents.verifier import VerifiedFinding
+from .baselines import always_flag, flag_by_diff_size, score_baseline
 from .golden_set import GoldenSetCase, load_golden_set
 from .scoring import EvalReport, SectionScore, aggregate_scores, score_case
 
@@ -79,9 +80,20 @@ def run_case(case: GoldenSetCase) -> tuple[list[SectionScore], list[VerifiedFind
     return score_case(case.ground_truth, verified_findings), verified_findings
 
 
+BASELINES = {
+    "always_flag": always_flag,
+    "diff_size": flag_by_diff_size,
+}
+
+
 def run_eval(
     golden_set_dir: Path = GOLDEN_SET_DIR,
-) -> tuple[EvalReport, list[tuple[GoldenSetCase, list[SectionScore]]], RagasReport]:
+) -> tuple[
+    EvalReport,
+    list[tuple[GoldenSetCase, list[SectionScore]]],
+    RagasReport,
+    dict[str, EvalReport],
+]:
     # Local, not top-level -- see the TYPE_CHECKING import above.
     from .ragas_scoring import build_ragas_samples, score_with_ragas
 
@@ -107,7 +119,16 @@ def run_eval(
     ]
     ragas_report: RagasReport = score_with_ragas(ragas_samples)
 
-    return report, case_scores, ragas_report
+    # Baselines are mechanical (no model call), so scored straight from the
+    # golden set's cases -- no dependency on the pipeline run above at all.
+    baseline_reports = {
+        name: aggregate_scores(
+            [score for case in cases for score in score_baseline(case.ground_truth, predict(case))]
+        )
+        for name, predict in BASELINES.items()
+    }
+
+    return report, case_scores, ragas_report, baseline_reports
 
 
 def _pct(value: float | None) -> str:
@@ -127,6 +148,7 @@ def format_report(
     report: EvalReport,
     case_scores: list[tuple[GoldenSetCase, list[SectionScore]]],
     ragas_report: RagasReport,
+    baseline_reports: dict[str, EvalReport],
 ) -> str:
     total = report.tp + report.fp + report.fn + report.tn
     lines = [
@@ -139,6 +161,21 @@ def format_report(
         f"- Precision: {_pct(report.precision)} ({report.tp} TP / {report.tp + report.fp} claimed)",
         f"- Recall: {_pct(report.recall)} ({report.tp} TP / {report.tp + report.fn} expected)",
         f"- TP={report.tp}  FP={report.fp}  FN={report.fn}  TN={report.tn}",
+        "",
+        "## Baseline comparison",
+        "",
+        "| | Precision | Recall |",
+        "|---|---|---|",
+        f"| Pipeline | {_pct(report.precision)} | {_pct(report.recall)} |",
+    ]
+    for name, baseline_report in baseline_reports.items():
+        lines.append(f"| {name} | {_pct(baseline_report.precision)} | {_pct(baseline_report.recall)} |")
+    lines += [
+        "",
+        "(`always_flag` predicts every evaluable section is material -- the floor."
+        " `diff_size` predicts material only if the section's diff exceeds a size"
+        " threshold, no model call either. Neither costs anything to re-run. See"
+        " docs/BASELINE_EVAL_SPEC.md.)",
         "",
         "## Confidence calibration",
         "",
@@ -201,8 +238,10 @@ def format_report(
 
 
 def main() -> None:
-    report, case_scores, ragas_report = run_eval()
-    REPORT_PATH.write_text(format_report(report, case_scores, ragas_report), encoding="utf-8")
+    report, case_scores, ragas_report, baseline_reports = run_eval()
+    REPORT_PATH.write_text(
+        format_report(report, case_scores, ragas_report, baseline_reports), encoding="utf-8"
+    )
     print(f"Precision: {_pct(report.precision)}  Recall: {_pct(report.recall)}")
     print(f"TP={report.tp} FP={report.fp} FN={report.fn} TN={report.tn}")
     print(f"Avg confidence TP={_confidence(report.avg_confidence_tp)} FP={_confidence(report.avg_confidence_fp)}")
@@ -211,6 +250,11 @@ def main() -> None:
         f"answer_correctness={_pct(ragas_report.answer_correctness)} "
         f"(n={ragas_report.n_samples})"
     )
+    for name, baseline_report in baseline_reports.items():
+        print(
+            f"Baseline {name}: precision={_pct(baseline_report.precision)} "
+            f"recall={_pct(baseline_report.recall)}"
+        )
     print(f"Report written to {REPORT_PATH}")
 
 
