@@ -16,9 +16,36 @@ import sys
 
 from dotenv import load_dotenv
 
-from src.api.queries import get_report, list_curated_tickers
-from src.storage.db import get_connection
+from src.storage.db import (
+    get_connection,
+    get_filings_for_ticker,
+    get_findings_for_filing_pair,
+)
 from src.storage.s3_store import get_client, put_json
+
+
+def _list_all_tickers(conn) -> list[str]:
+    rows = conn.execute("SELECT DISTINCT ticker FROM filings ORDER BY ticker").fetchall()
+    return [row["ticker"] for row in rows]
+
+
+def _build_report(conn, ticker: str) -> dict | None:
+    """Reads straight from the local SQLite DB that scripts/run_pipeline.py
+    writes to -- this is the one-time/each-time bridge from local storage to
+    the published S3 report; src/api/queries.py (what the live API reads)
+    no longer touches SQLite at all once this script has run.
+    """
+    filings = get_filings_for_ticker(conn, ticker, form_type="10-K", limit=2)
+    if len(filings) < 2:
+        return None
+    newer, older = filings[0], filings[1]  # get_filings_for_ticker orders DESC by filing_date
+    findings = get_findings_for_filing_pair(conn, older["id"], newer["id"])
+    return {
+        "ticker": ticker.upper(),
+        "older_filing": older,
+        "newer_filing": newer,
+        "findings": findings,
+    }
 
 
 def export_all(conn, s3_client, bucket: str, tickers: list[str]) -> dict[int, str]:
@@ -29,7 +56,7 @@ def export_all(conn, s3_client, bucket: str, tickers: list[str]) -> dict[int, st
     """
     index: dict[int, str] = {}
     for ticker in tickers:
-        report = get_report(conn, ticker)
+        report = _build_report(conn, ticker)
         if report is None:
             print(f"{ticker}: no report available, skipped")
             continue
@@ -48,7 +75,7 @@ def main() -> None:
     load_dotenv()
     bucket = sys.argv[1]
     conn = get_connection()
-    tickers = sys.argv[2:] or list_curated_tickers(conn)
+    tickers = sys.argv[2:] or _list_all_tickers(conn)
 
     s3_client = get_client()
     index = export_all(conn, s3_client, bucket, tickers)

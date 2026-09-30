@@ -1,75 +1,90 @@
+import io
+import json
+
 from src.api.queries import get_finding, get_report, list_curated_tickers
 
 
-class _StubResult:
-    def __init__(self, value):
-        self._value = value
-
-    def fetchone(self):
-        return self._value
-
-    def fetchall(self):
-        return self._value if self._value is not None else []
+class _NoSuchKey(Exception):
+    pass
 
 
-class _StubConnection:
-    def __init__(self, results=None):
-        self.calls = []
-        self._results = list(results or [])
-
-    def execute(self, query, params=None):
-        self.calls.append({"query": query, "params": params})
-        value = self._results.pop(0) if self._results else None
-        return _StubResult(value)
+class _StubExceptions:
+    NoSuchKey = _NoSuchKey
 
 
-def test_list_curated_tickers_returns_ticker_strings():
-    rows = [{"ticker": "AAPL"}, {"ticker": "LYV"}]
-    conn = _StubConnection(results=[rows])
+class _StubS3Client:
+    exceptions = _StubExceptions
 
-    result = list_curated_tickers(conn)
+    def __init__(self, objects: dict | None = None):
+        self._objects = objects or {}  # key -> already-JSON-serializable value
+
+    def list_objects_v2(self, Bucket):
+        return {"Contents": [{"Key": k} for k in self._objects]}
+
+    def get_object(self, Bucket, Key):
+        if Key not in self._objects:
+            raise self.exceptions.NoSuchKey()
+        body = json.dumps(self._objects[Key]).encode("utf-8")
+        return {"Body": io.BytesIO(body)}
+
+
+def test_list_curated_tickers_strips_json_suffix_and_sorts():
+    client = _StubS3Client(objects={"LYV.json": {}, "AAPL.json": {}})
+
+    result = list_curated_tickers(client, bucket="test-bucket")
 
     assert result == ["AAPL", "LYV"]
 
 
-def test_get_report_returns_older_and_newer_filing_with_findings():
-    filings = [
-        {"id": 2, "filing_date": "2025-01-01"},  # newer, first per DESC order
-        {"id": 1, "filing_date": "2024-01-01"},  # older
-    ]
-    findings = [{"id": 10, "item_key": "1A"}]
-    conn = _StubConnection(results=[filings, findings])
+def test_list_curated_tickers_excludes_underscore_prefixed_keys():
+    # _index.json is metadata, not a ticker report.
+    client = _StubS3Client(objects={"AAPL.json": {}, "_index.json": {"1": "AAPL"}})
 
-    result = get_report(conn, "aapl")
+    result = list_curated_tickers(client, bucket="test-bucket")
 
-    assert result["ticker"] == "AAPL"
-    assert result["newer_filing"]["id"] == 2
-    assert result["older_filing"]["id"] == 1
-    assert result["findings"] == findings
-    # get_findings_for_filing_pair called with (older_id, newer_id, older_id, newer_id)
-    assert conn.calls[1]["params"] == (1, 2, 1, 2)
+    assert result == ["AAPL"]
 
 
-def test_get_report_returns_none_when_fewer_than_two_filings():
-    conn = _StubConnection(results=[[{"id": 1}]])
+def test_get_report_returns_published_report():
+    report = {"ticker": "AAPL", "older_filing": {}, "newer_filing": {}, "findings": [{"id": 10}]}
+    client = _StubS3Client(objects={"AAPL.json": report})
 
-    result = get_report(conn, "aapl")
+    result = get_report(client, "aapl", bucket="test-bucket")
+
+    assert result == report
+
+
+def test_get_report_returns_none_when_not_published():
+    client = _StubS3Client(objects={})
+
+    result = get_report(client, "unknown", bucket="test-bucket")
 
     assert result is None
 
 
-def test_get_finding_returns_row_when_found():
-    conn = _StubConnection(results=[{"id": 5, "item_key": "8"}])
+def test_get_finding_looks_up_ticker_via_index_then_finds_it_in_that_report():
+    report = {
+        "ticker": "AAPL",
+        "findings": [{"id": 10, "item_key": "1A"}, {"id": 11, "item_key": "3"}],
+    }
+    client = _StubS3Client(objects={"AAPL.json": report, "_index.json": {"10": "AAPL", "11": "AAPL"}})
 
-    result = get_finding(conn, 5)
+    result = get_finding(client, 11, bucket="test-bucket")
 
-    assert result == {"id": 5, "item_key": "8"}
-    assert conn.calls[0]["params"] == (5,)
+    assert result == {"id": 11, "item_key": "3"}
 
 
-def test_get_finding_returns_none_when_not_found():
-    conn = _StubConnection(results=[None])
+def test_get_finding_returns_none_when_id_not_in_index():
+    client = _StubS3Client(objects={"_index.json": {"10": "AAPL"}})
 
-    result = get_finding(conn, 999)
+    result = get_finding(client, 999, bucket="test-bucket")
+
+    assert result is None
+
+
+def test_get_finding_returns_none_when_index_missing_entirely():
+    client = _StubS3Client(objects={})
+
+    result = get_finding(client, 10, bucket="test-bucket")
 
     assert result is None

@@ -1,3 +1,5 @@
+import io
+import json
 import logging
 
 import pytest
@@ -7,36 +9,38 @@ import src.api.mcp_server as mcp_server_module
 from src.api.mcp_server import mcp
 
 
-class _StubResult:
-    def __init__(self, value):
-        self._value = value
-
-    def fetchone(self):
-        return self._value
-
-    def fetchall(self):
-        return self._value if self._value is not None else []
+class _NoSuchKey(Exception):
+    pass
 
 
-class _StubConnection:
-    def __init__(self, results=None):
-        self.calls = []
-        self._results = list(results or [])
-        self.closed = False
-
-    def execute(self, query, params=None):
-        self.calls.append({"query": query, "params": params})
-        value = self._results.pop(0) if self._results else None
-        return _StubResult(value)
-
-    def close(self):
-        self.closed = True
+class _StubExceptions:
+    NoSuchKey = _NoSuchKey
 
 
-def _patch_connection(monkeypatch, results):
-    conn = _StubConnection(results=results)
-    monkeypatch.setattr(mcp_server_module, "get_connection", lambda: conn)
-    return conn
+class _StubS3Client:
+    exceptions = _StubExceptions
+
+    def __init__(self, objects: dict | None = None):
+        self._objects = objects or {}
+
+    def list_objects_v2(self, Bucket):
+        return {"Contents": [{"Key": k} for k in self._objects]}
+
+    def get_object(self, Bucket, Key):
+        if Key not in self._objects:
+            raise self.exceptions.NoSuchKey()
+        return {"Body": io.BytesIO(json.dumps(self._objects[Key]).encode("utf-8"))}
+
+
+def _patch_client(monkeypatch, objects):
+    client = _StubS3Client(objects=objects)
+    monkeypatch.setattr(mcp_server_module, "get_client", lambda: client)
+    return client
+
+
+@pytest.fixture(autouse=True)
+def _s3_bucket_env(monkeypatch):
+    monkeypatch.setenv("S3_BUCKET", "test-bucket")
 
 
 @pytest.fixture
@@ -46,7 +50,7 @@ def anyio_backend():
 
 @pytest.mark.anyio
 async def test_list_tickers_tool(monkeypatch):
-    _patch_connection(monkeypatch, results=[[{"ticker": "AAPL"}]])
+    _patch_client(monkeypatch, objects={"AAPL.json": {}})
 
     async with Client(mcp, raise_exceptions=True) as client:
         result = await client.call_tool("list_tickers", {})
@@ -56,7 +60,7 @@ async def test_list_tickers_tool(monkeypatch):
 
 @pytest.mark.anyio
 async def test_tool_calls_are_logged_with_timing(monkeypatch, caplog):
-    _patch_connection(monkeypatch, results=[[{"ticker": "AAPL"}]])
+    _patch_client(monkeypatch, objects={"AAPL.json": {}})
 
     with caplog.at_level(logging.INFO):
         async with Client(mcp, raise_exceptions=True) as client:
@@ -71,23 +75,18 @@ async def test_tool_calls_are_logged_with_timing(monkeypatch, caplog):
 
 @pytest.mark.anyio
 async def test_get_materiality_report_tool_returns_report(monkeypatch):
-    filings = [
-        {"id": 2, "filing_date": "2025-01-01"},
-        {"id": 1, "filing_date": "2024-01-01"},
-    ]
-    findings = [{"id": 10, "item_key": "1A"}]
-    conn = _patch_connection(monkeypatch, results=[filings, findings])
+    report = {"ticker": "AAPL", "older_filing": {"id": 1}, "newer_filing": {"id": 2}, "findings": [{"id": 10}]}
+    _patch_client(monkeypatch, objects={"AAPL.json": report})
 
     async with Client(mcp, raise_exceptions=True) as client:
         result = await client.call_tool("get_materiality_report", {"ticker": "aapl"})
 
     assert result.structured_content["ticker"] == "AAPL"
-    assert conn.closed is True
 
 
 @pytest.mark.anyio
 async def test_get_materiality_report_tool_error_when_not_found(monkeypatch):
-    _patch_connection(monkeypatch, results=[[{"id": 1}]])  # only 1 filing found
+    _patch_client(monkeypatch, objects={})
 
     async with Client(mcp, raise_exceptions=False) as client:
         result = await client.call_tool("get_materiality_report", {"ticker": "UNKNOWN"})
@@ -98,7 +97,8 @@ async def test_get_materiality_report_tool_error_when_not_found(monkeypatch):
 
 @pytest.mark.anyio
 async def test_get_finding_citation_tool_returns_finding(monkeypatch):
-    _patch_connection(monkeypatch, results=[{"id": 5, "item_key": "8"}])
+    report = {"ticker": "AAPL", "findings": [{"id": 5, "item_key": "8"}]}
+    _patch_client(monkeypatch, objects={"AAPL.json": report, "_index.json": {"5": "AAPL"}})
 
     async with Client(mcp, raise_exceptions=True) as client:
         result = await client.call_tool("get_finding_citation", {"finding_id": 5})
@@ -108,7 +108,7 @@ async def test_get_finding_citation_tool_returns_finding(monkeypatch):
 
 @pytest.mark.anyio
 async def test_get_finding_citation_tool_error_when_not_found(monkeypatch):
-    _patch_connection(monkeypatch, results=[None])
+    _patch_client(monkeypatch, objects={})
 
     async with Client(mcp, raise_exceptions=False) as client:
         result = await client.call_tool("get_finding_citation", {"finding_id": 999})
