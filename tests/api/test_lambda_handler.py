@@ -1,39 +1,37 @@
+import io
 import json
 
 from src.api.lambda_handler import handler
-from src.api.rest import _get_conn
+from src.api.rest import _get_client
 from src.api.rest import app as rest_app
 
 
-class _StubResult:
-    def __init__(self, value):
-        self._value = value
-
-    def fetchone(self):
-        return self._value
-
-    def fetchall(self):
-        return self._value if self._value is not None else []
+class _NoSuchKey(Exception):
+    pass
 
 
-class _StubConnection:
-    def __init__(self, results=None):
-        self.calls = []
-        self._results = list(results or [])
-        self.closed = False
-
-    def execute(self, query, params=None):
-        self.calls.append({"query": query, "params": params})
-        value = self._results.pop(0) if self._results else None
-        return _StubResult(value)
-
-    def close(self):
-        self.closed = True
+class _StubExceptions:
+    NoSuchKey = _NoSuchKey
 
 
-def _override_conn(results):
+class _StubS3Client:
+    exceptions = _StubExceptions
+
+    def __init__(self, objects: dict | None = None):
+        self._objects = objects or {}
+
+    def list_objects_v2(self, Bucket):
+        return {"Contents": [{"Key": k} for k in self._objects]}
+
+    def get_object(self, Bucket, Key):
+        if Key not in self._objects:
+            raise self.exceptions.NoSuchKey()
+        return {"Body": io.BytesIO(json.dumps(self._objects[Key]).encode("utf-8"))}
+
+
+def _override_client(objects):
     def _get():
-        yield _StubConnection(results=results)
+        return _StubS3Client(objects=objects)
 
     return _get
 
@@ -53,7 +51,8 @@ def _api_gateway_v2_event(method: str, path: str, body: str | None = None, heade
     }
 
 
-def test_handler_survives_multiple_invocations_on_a_warm_container():
+def test_handler_survives_multiple_invocations_on_a_warm_container(monkeypatch):
+    monkeypatch.setenv("S3_BUCKET", "test-bucket")
     # Regression test for a real production bug: Mangum's "auto"/"on"
     # lifespan modes re-run the ASGI lifespan protocol on EVERY invocation
     # (a fresh LifespanCycle is built inside Mangum.__call__), but
@@ -69,7 +68,7 @@ def test_handler_survives_multiple_invocations_on_a_warm_container():
     # calls the actual `handler()` entry point multiple times, simulating
     # several requests hitting the same warm container, against both the
     # REST and MCP mounts.
-    rest_app.dependency_overrides[_get_conn] = _override_conn([[{"ticker": "AAPL"}]])
+    rest_app.dependency_overrides[_get_client] = _override_client({"AAPL.json": {}})
 
     response_1 = handler(_api_gateway_v2_event("GET", "/api/tickers"), object())
     response_2 = handler(_api_gateway_v2_event("GET", "/api/tickers"), object())

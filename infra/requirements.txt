@@ -14,6 +14,12 @@ attrs==26.1.0
     # via
     #   jsonschema
     #   referencing
+boto3==1.43.105
+    # via materiality-engine
+botocore==1.43.105
+    # via
+    #   boto3
+    #   s3transfer
 cffi==2.1.1 ; platform_python_implementation != 'PyPy'
     # via cryptography
 click==8.5.0 ; sys_platform != 'emscripten'
@@ -36,6 +42,10 @@ idna==3.19
     # via
     #   anyio
     #   httpx2
+jmespath==1.1.0
+    # via
+    #   boto3
+    #   botocore
 jsonschema==4.26.0
     # via mcp
 jsonschema-specifications==2025.9.1
@@ -48,10 +58,6 @@ mcp-types==2.2.0
     # via mcp
 opentelemetry-api==1.44.0
     # via mcp
-psycopg==3.3.5
-    # via materiality-engine
-psycopg-binary==3.3.5 ; implementation_name != 'pypy'
-    # via psycopg
 pycparser==3.0 ; implementation_name != 'PyPy' and platform_python_implementation != 'PyPy'
     # via cffi
 pydantic==2.13.5
@@ -62,8 +68,10 @@ pydantic==2.13.5
     #   mcp-types
 pydantic-core==2.46.5
     # via pydantic
-pyjwt==2.14.0
+pyjwt==2.15.1
     # via mcp
+python-dateutil==2.9.0.post0
+    # via botocore
 python-multipart==0.0.32
     # via mcp
 pywin32==312 ; sys_platform == 'win32'
@@ -76,6 +84,10 @@ rpds-py==2026.6.3
     # via
     #   jsonschema
     #   referencing
+s3transfer==0.19.2
+    # via boto3
+six==1.17.0
+    # via python-dateutil
 sse-starlette==3.4.11
     # via mcp
 starlette==1.6.0
@@ -96,7 +108,6 @@ typing-extensions==4.16.0
     #   mcp
     #   mcp-types
     #   opentelemetry-api
-    #   psycopg
     #   pydantic
     #   pydantic-core
     #   referencing
@@ -107,7 +118,7 @@ typing-inspection==0.4.4
     #   fastapi
     #   mcp
     #   pydantic
-tzdata==2026.3 ; sys_platform == 'win32'
-    # via psycopg
+urllib3==2.8.0
+    # via botocore
 uvicorn==0.52.4 ; sys_platform != 'emscripten'
     # via mcp

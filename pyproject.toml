@@ -10,10 +10,10 @@ requires-python = ">=3.12"
 # tiktoken/langgraph, which are unused dead weight there and were pushing a
 # plain zip deployment package right up against Lambda's 250MB limit.
 dependencies = [
+    "boto3>=1.43.105",
     "fastapi>=0.141.1",
     "mangum>=0.22.0",
     "mcp>=2.2.0",
-    "psycopg[binary]>=3.3.5",
     "pydantic>=2.13.5",
 ]
 

@@ -1,7 +1,7 @@
-"""Manual end-to-end verification -- NOT run in CI (needs a real DATABASE_URL
-pointing at Postgres with data already ingested via scripts/ingest_ticker.py,
-and a real OPENAI_API_KEY -- this makes real, billed OpenAI chat calls for
-both classification and verification). Runs the full align+classify+verify
+"""Manual end-to-end verification -- NOT run in CI (needs data already
+ingested via scripts/ingest_ticker.py into the local SQLite DB, and a real
+OPENAI_API_KEY -- this makes real, billed OpenAI chat calls for both
+classification and verification). Runs the full align+classify+verify
 LangGraph pipeline, prints the alignment report plus every finding's
 classification AND verification result, then persists everything to the
 `findings` table -- this is the first script in the project that writes its
