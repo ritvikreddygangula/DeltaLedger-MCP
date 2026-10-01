@@ -86,6 +86,21 @@ BASELINES = {
 }
 
 
+def run_baseline_eval(golden_set_dir: Path = GOLDEN_SET_DIR) -> dict[str, EvalReport]:
+    """Scores the mechanical, no-LLM baselines against the real golden set.
+    Makes zero OpenAI calls -- unlike run_eval() below, safe to run in the
+    default `uv run pytest` job on every push, not just manually. See
+    docs/BASELINE_EVAL_SPEC.md.
+    """
+    cases = load_golden_set(golden_set_dir)
+    return {
+        name: aggregate_scores(
+            [score for case in cases for score in score_baseline(case.ground_truth, predict(case))]
+        )
+        for name, predict in BASELINES.items()
+    }
+
+
 def run_eval(
     golden_set_dir: Path = GOLDEN_SET_DIR,
 ) -> tuple[
@@ -119,14 +134,9 @@ def run_eval(
     ]
     ragas_report: RagasReport = score_with_ragas(ragas_samples)
 
-    # Baselines are mechanical (no model call), so scored straight from the
-    # golden set's cases -- no dependency on the pipeline run above at all.
-    baseline_reports = {
-        name: aggregate_scores(
-            [score for case in cases for score in score_baseline(case.ground_truth, predict(case))]
-        )
-        for name, predict in BASELINES.items()
-    }
+    # No dependency on the pipeline run above -- reuses the free function so
+    # there's one definition of "what the baselines are," not two.
+    baseline_reports = run_baseline_eval(golden_set_dir)
 
     return report, case_scores, ragas_report, baseline_reports
 
