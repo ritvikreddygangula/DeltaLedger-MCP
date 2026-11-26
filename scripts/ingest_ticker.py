@@ -1,6 +1,6 @@
 """Manual end-to-end verification -- NOT run in CI (needs real network + a
 real EDGAR_USER_AGENT in .env). Pulls the two most recent 10-Ks for a ticker,
-parses their sections, and writes both into the local SQLite DB.
+parses their sections, and writes both into the Postgres at DATABASE_URL.
 
 Usage: uv run python scripts/ingest_ticker.py AAPL
 """
