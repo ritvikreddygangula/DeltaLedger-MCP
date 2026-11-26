@@ -1,161 +1,112 @@
-import io
-import json
 import logging
+from contextlib import contextmanager
 
 import pytest
 from fastapi.testclient import TestClient
 
 import src.api.rest as rest_module
-from src.api.rest import _get_client, app
+from src.api.rest import _get_conn, app
 
 
-@pytest.fixture(autouse=True)
-def _s3_bucket_env(monkeypatch):
-    # queries.py reads S3_BUCKET from the environment when no explicit
-    # bucket is passed, same as rest.py's route handlers call it -- every
-    # test here needs this set, whether or not it uses the stub client.
-    monkeypatch.setenv("S3_BUCKET", "test-bucket")
+@pytest.fixture
+def client(seeded_conn):
+    app.dependency_overrides[_get_conn] = lambda: seeded_conn
+    yield TestClient(app)
+    app.dependency_overrides.clear()
 
 
-class _NoSuchKey(Exception):
-    pass
-
-
-class _StubExceptions:
-    NoSuchKey = _NoSuchKey
-
-
-class _StubS3Client:
-    exceptions = _StubExceptions
-
-    def __init__(self, objects: dict | None = None):
-        self._objects = objects or {}
-
-    def list_objects_v2(self, Bucket):
-        return {"Contents": [{"Key": k} for k in self._objects]}
-
-    def get_object(self, Bucket, Key):
-        if Key not in self._objects:
-            raise self.exceptions.NoSuchKey()
-        return {"Body": io.BytesIO(json.dumps(self._objects[Key]).encode("utf-8"))}
-
-    def head_bucket(self, Bucket):
-        return {}
-
-
-def _override_client(objects):
-    def _get():
-        return _StubS3Client(objects=objects)
-
-    return _get
-
-
-def test_read_tickers_returns_list():
-    app.dependency_overrides[_get_client] = _override_client({"AAPL.json": {}})
-    client = TestClient(app)
-
+def test_read_tickers_returns_list(client):
     response = client.get("/tickers")
 
     assert response.status_code == 200
     assert response.json() == ["AAPL"]
-    app.dependency_overrides.clear()
 
 
-def test_cors_header_present_for_cross_origin_frontend():
-    # The frontend (S3 + CloudFront) is a different origin than this API
-    # (API Gateway), so a real browser fetch() needs this header or it gets
-    # silently blocked client-side regardless of the response body.
-    app.dependency_overrides[_get_client] = _override_client({"AAPL.json": {}})
-    client = TestClient(app)
-
-    response = client.get("/tickers", headers={"Origin": "https://example.cloudfront.net"})
+def test_cors_header_present_for_cross_origin_frontend(client):
+    # The frontend (Vercel) is a different origin than this API (Render), so
+    # a real browser fetch() needs this header or it gets silently blocked
+    # client-side regardless of the response body.
+    response = client.get("/tickers", headers={"Origin": "https://example.vercel.app"})
 
     assert response.headers.get("access-control-allow-origin") == "*"
-    app.dependency_overrides.clear()
 
 
-def test_read_report_returns_404_when_not_found():
-    app.dependency_overrides[_get_client] = _override_client({})
-    client = TestClient(app)
-
-    response = client.get("/reports/UNKNOWN")
-
-    assert response.status_code == 404
-    app.dependency_overrides.clear()
+def test_read_report_returns_404_when_not_found(client):
+    assert client.get("/reports/UNKNOWN").status_code == 404
+    assert client.get("/reports/LYV").status_code == 404  # only one 10-K ingested
 
 
-def test_read_report_returns_full_report():
-    report = {"ticker": "AAPL", "older_filing": {"id": 1}, "newer_filing": {"id": 2}, "findings": [{"id": 10}]}
-    app.dependency_overrides[_get_client] = _override_client({"AAPL.json": report})
-    client = TestClient(app)
-
-    response = client.get("/reports/AAPL")
+def test_read_report_returns_full_report(client):
+    response = client.get("/reports/aapl")
 
     assert response.status_code == 200
     body = response.json()
     assert body["ticker"] == "AAPL"
-    assert body["findings"] == [{"id": 10}]
-    app.dependency_overrides.clear()
+    assert set(body) == {"ticker", "older_filing", "newer_filing", "findings"}
+    assert [f["item_key"] for f in body["findings"]] == ["1A", "7"]
+    assert body["newer_filing"]["filing_date"] == "2025-11-01"
 
 
-def test_read_finding_returns_404_when_not_found():
-    app.dependency_overrides[_get_client] = _override_client({})
-    client = TestClient(app)
-
-    response = client.get("/findings/999")
-
-    assert response.status_code == 404
-    app.dependency_overrides.clear()
+def test_read_finding_returns_404_when_not_found(client):
+    assert client.get("/findings/999999").status_code == 404
 
 
-def test_read_finding_returns_finding():
-    report = {"ticker": "AAPL", "findings": [{"id": 5, "item_key": "8"}]}
-    app.dependency_overrides[_get_client] = _override_client(
-        {"AAPL.json": report, "_index.json": {"5": "AAPL"}}
-    )
-    client = TestClient(app)
+def test_read_finding_returns_finding(client):
+    finding_id = client.get("/reports/AAPL").json()["findings"][0]["id"]
 
-    response = client.get("/findings/5")
+    response = client.get(f"/findings/{finding_id}")
 
     assert response.status_code == 200
-    assert response.json()["id"] == 5
-    app.dependency_overrides.clear()
+    assert response.json()["id"] == finding_id
 
 
-def test_health_returns_ok_when_storage_reachable(monkeypatch):
-    monkeypatch.setattr(rest_module, "get_client", lambda: _StubS3Client())
-    client = TestClient(app)
+def test_health_returns_ok_when_db_reachable(monkeypatch, seeded_conn):
+    @contextmanager
+    def _connection():
+        yield seeded_conn
 
-    response = client.get("/health")
+    monkeypatch.setattr(rest_module, "connection", _connection)
+
+    response = TestClient(app).get("/health")
 
     assert response.status_code == 200
     assert response.json() == {"status": "ok", "storage": "connected"}
 
 
-def test_health_returns_503_without_leaking_details_when_storage_unreachable(monkeypatch):
-    class _RaisingClient:
-        def head_bucket(self, Bucket):
-            raise ConnectionError("AccessDenied for arn:aws:iam::123456789012:role/secret-internal-role")
+def test_health_returns_503_when_db_unreachable(monkeypatch):
+    @contextmanager
+    def _connection():
+        raise ConnectionError(
+            "connection to server at db.secret-ref.supabase.co failed: password authentication failed"
+        )
+        yield  # pragma: no cover
 
-    monkeypatch.setattr(rest_module, "get_client", lambda: _RaisingClient())
-    client = TestClient(app)
+    monkeypatch.setattr(rest_module, "connection", _connection)
 
-    response = client.get("/health")
+    response = TestClient(app).get("/health")
 
     assert response.status_code == 503
-    body = response.json()
-    assert body == {"status": "degraded", "storage": "unreachable"}
-    assert "secret-internal-role" not in response.text
+    assert response.json() == {"status": "degraded", "storage": "unreachable"}
+    assert "secret-ref" not in response.text
 
 
-def test_requests_are_logged_with_method_path_status_and_duration(caplog):
-    app.dependency_overrides[_get_client] = _override_client({"AAPL.json": {}})
-    client = TestClient(app)
+def test_health_returns_503_when_database_url_missing(monkeypatch):
+    # The real pool path, not a stub: a missing DATABASE_URL must degrade
+    # the health check, not crash the request.
+    import src.api.db_pool as db_pool
 
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(db_pool, "_pool", None)
+
+    response = TestClient(app).get("/health")
+
+    assert response.status_code == 503
+
+
+def test_requests_are_logged_with_method_path_status_and_duration(client, caplog):
     with caplog.at_level(logging.INFO):
         client.get("/tickers")
 
-    app.dependency_overrides.clear()
     events = [r for r in caplog.records if getattr(r, "fields", {}).get("event") == "http_request"]
     assert len(events) == 1
     fields = events[0].fields
