@@ -37,6 +37,19 @@ def test_get_report_values_are_json_strings(seeded_conn):
     assert report["findings"][0]["excerpt_verified"] is True
 
 
+def test_timestamps_are_utc_with_z_suffix_like_the_old_api(seeded_conn):
+    # The previous S3-published JSON used "2026-09-15T14:24:52.889724Z".
+    # Keep that exact format so existing consumers see no change.
+    seeded_conn.execute("SET TIME ZONE 'America/Phoenix'")  # result must not depend on session tz
+    seeded_conn.execute(
+        "UPDATE filings SET fetched_at = '2026-09-15T14:24:52.889724Z' WHERE ticker = 'AAPL'"
+    )
+
+    report = get_report(seeded_conn, "AAPL")
+
+    assert report["newer_filing"]["fetched_at"] == "2026-09-15T14:24:52.889724Z"
+
+
 def test_get_finding_by_id(seeded_conn):
     finding_id = get_report(seeded_conn, "AAPL")["findings"][1]["id"]
 

@@ -1,4 +1,4 @@
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 
 import psycopg
 
@@ -11,8 +11,20 @@ def _jsonable(row: dict) -> dict:
     would serialize them on its own, but MCP tool results go through a
     different serializer, so normalize once here and both surfaces return
     exactly the same shape.
+
+    Timestamps are rendered in UTC with a "Z" suffix
+    ("2026-09-15T14:24:52.889724Z"), the exact format the S3-published API
+    used, whatever the database session's time zone is.
     """
-    return {k: v.isoformat() if isinstance(v, (date, datetime)) else v for k, v in row.items()}
+    return {k: _iso(v) for k, v in row.items()}
+
+
+def _iso(value):
+    if isinstance(value, datetime):
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
 
 
 def list_curated_tickers(conn: psycopg.Connection) -> list[str]:
