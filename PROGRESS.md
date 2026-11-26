@@ -333,7 +333,7 @@ The `"medium"` row above also happens to be this project's first real post-diffi
 - **Tests:** the storage and API tests now run against a real Postgres (the `pg_conn` fixture on `TEST_DATABASE_URL`). That closes the trade-off recorded in Part 2, where Postgres could only be stub-tested. CI runs a `postgres:17` service container with `REQUIRE_PG=1`, so a misconfigured database fails the build instead of skipping silently.
 - **Removed:** `infra/`, `Makefile`, `scripts/deploy*.sh`, `scripts/export_to_s3.py`, `src/storage/s3_store.py`, `boto3`, `mangum`. Added: `render.yaml`, `.github/workflows/keepalive.yml` (a daily health ping, since Supabase's free tier pauses after 7 idle days), and one `API_ORIGIN` constant in the frontend.
 
-**Data migration, with a real catch.** The local SQLite file only held AAPL (1 finding). The 12 tickers' 236 findings existed only in the S3-published reports. So `scripts/import_published_reports.py` imports from the old public API, or from the JSONL backup at `data/published_reports_backup.jsonl`, rather than from SQLite. It keeps every filing and finding id so citations stay stable, advances the identity sequences past them, is idempotent, and reads every report back through `get_report()` to check it matches the source. Sections and the LLM cache were never published. Sections can be re-fetched free via `ingest_ticker` (upsert by accession keeps the ids).
+**Data migration, with a real catch.** The local SQLite file only held AAPL (1 finding). The 12 tickers' 236 findings existed only in the S3-published reports. So `scripts/import_published_reports.py` imports from the old public API, or from the JSONL backup at `data/published_reports_backup.jsonl`, rather than from SQLite. It keeps every filing and finding id so citations stay stable, advances the identity sequences past them, is idempotent, and reads every report back through `get_report()` to check it matches the source. Sections and the LLM cache were never published. Sections can be re-fetched free via `ingest_ticker` (upsert by accession keeps the ids). The script and its tests were deleted once the import into Supabase was done and verified. They're in git history (PR #13) if they're ever needed again.
 
 **Parity verified byte-for-byte, not assumed.** The first comparison exposed a format difference: the old API emitted timestamps as `…889724Z`, while Python's `isoformat()` gives `+00:00` (and the session time zone leaks in). Fixed in `queries._jsonable`: UTC, `Z` suffix, independent of session time zone, with a test. After that, `/tickers`, all 12 `/reports/{t}` and sampled `/findings/{id}` responses from the new app (on a local Postgres loaded by the import script) were `cmp`-identical to the live AWS API. The Render build and start commands were run against a clean `git archive` of the branch: health ok, and openai/scipy absent from the build. The frontend was checked in Chrome against the new backend.
 
@@ -343,9 +343,10 @@ The `"medium"` row above also happens to be this project's first real post-diffi
 - [x] `render.yaml` + keepalive workflow
 - [x] Frontend points at Render; free-tier cold-start message
 - [x] AWS infra files removed; README rewritten (architecture, why this stack, local setup, deploying)
-- [ ] Manual: create the Supabase project, run the import, create the Render and Vercel services, update the URLs if they differ, set the `API_BASE_URL` repo variable (your action)
-- [ ] Manual: tear down the AWS resources once the new stack is verified live (your action)
+- [x] Manual: create the Supabase project, run the import, create the Render and Vercel services (your action)
+- [x] Cleanup: one-time import script and the obsolete local SQLite file removed
+- [x] Manual: tear down the AWS resources (your action)
 
-**Current sub-step:** code complete. The manual setup steps above are pending.
+**Current sub-step:** none. Part 10 is complete and live on Supabase + Render + Vercel.
 
 **Open decisions / blockers:** RAG (chunking, pgvector, hybrid search, cited Q&A, retrieval eval) is deliberately not part of this Part. It will be designed separately on its own branch.
