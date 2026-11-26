@@ -1,5 +1,5 @@
 """Manual end-to-end verification -- NOT run in CI (needs data already
-ingested via scripts/ingest_ticker.py into the local SQLite DB, and a real
+ingested via scripts/ingest_ticker.py into the Postgres at DATABASE_URL, and a real
 OPENAI_API_KEY -- this makes real, billed OpenAI chat calls for both
 classification and verification). Runs the full align+classify+verify
 LangGraph pipeline, prints the alignment report plus every finding's

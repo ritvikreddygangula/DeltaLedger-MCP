@@ -1,66 +1,68 @@
-import json
-import os
+from datetime import UTC, date, datetime
 
-from ..storage.s3_store import S3Client
+import psycopg
 
-
-def _require_bucket_from_env() -> str:
-    bucket = os.environ.get("S3_BUCKET")
-    if not bucket:
-        raise RuntimeError(
-            "S3_BUCKET is required (the bucket scripts/export_to_s3.py publishes to). "
-            "See .env.example."
-        )
-    return bucket
+from ..storage.db import get_filings_for_ticker, get_findings_for_filing_pair
 
 
-def list_curated_tickers(client: S3Client, bucket: str | None = None) -> list[str]:
-    """'Curated' = 'whatever's already been published to S3' -- no separate
-    hardcoded allowlist to maintain. Expanding the curated set happens by
-    running the existing CLI scripts plus scripts/export_to_s3.py, never
-    through this API. Un-paginated -- fine well past the ~50-70 ticker
-    scale this project targets; S3 caps a single list_objects_v2 response
-    at 1000 keys, so this would need paginating long before that stops
-    being true.
+def _jsonable(row: dict) -> dict:
+    """Postgres hands back date/datetime objects, but the public API's
+    contract (and the old S3-published JSON) has them as ISO strings. FastAPI
+    would serialize them on its own, but MCP tool results go through a
+    different serializer, so normalize once here and both surfaces return
+    exactly the same shape.
+
+    Timestamps are rendered in UTC with a "Z" suffix
+    ("2026-09-15T14:24:52.889724Z"), the exact format the S3-published API
+    used, whatever the database session's time zone is.
     """
-    bucket = bucket or _require_bucket_from_env()
-    resp = client.list_objects_v2(Bucket=bucket)
-    tickers = []
-    for obj in resp.get("Contents", []):
-        key = obj["Key"]
-        if key.endswith(".json") and not key.startswith("_"):
-            tickers.append(key[: -len(".json")])
-    return sorted(tickers)
+    return {k: _iso(v) for k, v in row.items()}
 
 
-def get_report(client: S3Client, ticker: str, bucket: str | None = None) -> dict | None:
-    """Returns the two most recent 10-Ks for a ticker plus every finding for
-    that pair, exactly as scripts/export_to_s3.py published it, or None if
-    that ticker hasn't been published.
+def _iso(value):
+    if isinstance(value, datetime):
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    if isinstance(value, date):
+        return value.isoformat()
+    return value
+
+
+def list_curated_tickers(conn: psycopg.Connection) -> list[str]:
+    """'Curated' means every ticker the offline pipeline has ingested at
+    least two 10-Ks for, i.e. everything get_report() can actually answer.
+    There's no separate allowlist to maintain. The set only grows through
+    the CLI scripts, never through this API.
     """
-    bucket = bucket or _require_bucket_from_env()
-    try:
-        obj = client.get_object(Bucket=bucket, Key=f"{ticker.upper()}.json")
-    except client.exceptions.NoSuchKey:
-        return None
-    return json.loads(obj["Body"].read())
+    rows = conn.execute(
+        """SELECT ticker FROM filings WHERE form_type = '10-K'
+           GROUP BY ticker HAVING count(*) >= 2 ORDER BY ticker"""
+    ).fetchall()
+    return [r["ticker"] for r in rows]
 
 
-def get_finding(client: S3Client, finding_id: int, bucket: str | None = None) -> dict | None:
-    """Looks up which ticker's report contains this finding via the
-    _index.json scripts/export_to_s3.py publishes alongside every report,
-    rather than fetching and scanning every ticker's file for one id.
+def get_report(conn: psycopg.Connection, ticker: str) -> dict | None:
+    """Returns the two most recent 10-Ks for a ticker plus the latest pipeline
+    run's findings for that pair, or None if fewer than two are ingested.
     """
-    bucket = bucket or _require_bucket_from_env()
-    try:
-        index_obj = client.get_object(Bucket=bucket, Key="_index.json")
-    except client.exceptions.NoSuchKey:
+    filings = get_filings_for_ticker(conn, ticker, form_type="10-K", limit=2)
+    if len(filings) < 2:
         return None
-    index = json.loads(index_obj["Body"].read())
-    ticker = index.get(str(finding_id))
-    if ticker is None:
+    newer, older = filings[0], filings[1]  # get_filings_for_ticker orders DESC by filing_date
+    findings = get_findings_for_filing_pair(conn, older["id"], newer["id"])
+    return {
+        "ticker": ticker.upper(),
+        "older_filing": _jsonable(older),
+        "newer_filing": _jsonable(newer),
+        "findings": [_jsonable(f) for f in findings],
+    }
+
+
+def get_finding(conn: psycopg.Connection, finding_id: int) -> dict | None:
+    """Any finding by id, including ones from earlier pipeline runs. A
+    finding id is a citation, and findings are append-only, so an id someone
+    quoted keeps resolving to the same evidence.
+    """
+    if not 0 < finding_id < 2**63:  # outside BIGINT: Postgres would raise, not just miss
         return None
-    report = get_report(client, ticker, bucket=bucket)
-    if report is None:
-        return None
-    return next((f for f in report["findings"] if f["id"] == finding_id), None)
+    row = conn.execute("SELECT * FROM findings WHERE id = %s", (finding_id,)).fetchone()
+    return _jsonable(row) if row else None

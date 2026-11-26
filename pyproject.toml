@@ -5,16 +5,16 @@ description = "Filing materiality & diligence agent: detects and classifies mate
 requires-python = ">=3.12"
 # Only what the deployed API (src/api/*) actually imports. Everything the
 # offline ingestion pipeline needs lives in the "pipeline" dependency group
-# below -- kept separate so the Lambda's requirements.txt (via `uv export
-# --no-group pipeline`) doesn't drag in scipy/scikit-learn/numpy/openai/
-# tiktoken/langgraph, which are unused dead weight there and were pushing a
-# plain zip deployment package right up against Lambda's 250MB limit.
+# below. Render installs with `--no-group pipeline` (see render.yaml), so the
+# server's build never pulls in scipy/scikit-learn/numpy/openai/tiktoken/
+# langgraph, which it never imports.
 dependencies = [
-    "boto3>=1.43.105",
     "fastapi>=0.141.1",
-    "mangum>=0.22.0",
     "mcp>=2.2.0",
+    "psycopg-pool>=3.3.3",
+    "psycopg[binary]>=3.3.9",
     "pydantic>=2.13.5",
+    "uvicorn>=0.52.4",
 ]
 
 [dependency-groups]

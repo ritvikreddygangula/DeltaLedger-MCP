@@ -1,4 +1,3 @@
-import io
 import json
 import logging
 
@@ -9,38 +8,10 @@ import src.api.mcp_server as mcp_server_module
 from src.api.mcp_server import mcp
 
 
-class _NoSuchKey(Exception):
-    pass
-
-
-class _StubExceptions:
-    NoSuchKey = _NoSuchKey
-
-
-class _StubS3Client:
-    exceptions = _StubExceptions
-
-    def __init__(self, objects: dict | None = None):
-        self._objects = objects or {}
-
-    def list_objects_v2(self, Bucket):
-        return {"Contents": [{"Key": k} for k in self._objects]}
-
-    def get_object(self, Bucket, Key):
-        if Key not in self._objects:
-            raise self.exceptions.NoSuchKey()
-        return {"Body": io.BytesIO(json.dumps(self._objects[Key]).encode("utf-8"))}
-
-
-def _patch_client(monkeypatch, objects):
-    client = _StubS3Client(objects=objects)
-    monkeypatch.setattr(mcp_server_module, "get_client", lambda: client)
-    return client
-
-
-@pytest.fixture(autouse=True)
-def _s3_bucket_env(monkeypatch):
-    monkeypatch.setenv("S3_BUCKET", "test-bucket")
+@pytest.fixture
+def seeded(seeded_conn, patch_connection):
+    patch_connection(mcp_server_module, seeded_conn)
+    return seeded_conn
 
 
 @pytest.fixture
@@ -49,8 +20,7 @@ def anyio_backend():
 
 
 @pytest.mark.anyio
-async def test_list_tickers_tool(monkeypatch):
-    _patch_client(monkeypatch, objects={"AAPL.json": {}})
+async def test_list_tickers_tool(seeded):
 
     async with Client(mcp, raise_exceptions=True) as client:
         result = await client.call_tool("list_tickers", {})
@@ -59,8 +29,7 @@ async def test_list_tickers_tool(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_tool_calls_are_logged_with_timing(monkeypatch, caplog):
-    _patch_client(monkeypatch, objects={"AAPL.json": {}})
+async def test_tool_calls_are_logged_with_timing(seeded, caplog):
 
     with caplog.at_level(logging.INFO):
         async with Client(mcp, raise_exceptions=True) as client:
@@ -74,19 +43,21 @@ async def test_tool_calls_are_logged_with_timing(monkeypatch, caplog):
 
 
 @pytest.mark.anyio
-async def test_get_materiality_report_tool_returns_report(monkeypatch):
-    report = {"ticker": "AAPL", "older_filing": {"id": 1}, "newer_filing": {"id": 2}, "findings": [{"id": 10}]}
-    _patch_client(monkeypatch, objects={"AAPL.json": report})
+async def test_get_materiality_report_tool_returns_report(seeded):
 
     async with Client(mcp, raise_exceptions=True) as client:
         result = await client.call_tool("get_materiality_report", {"ticker": "aapl"})
 
-    assert result.structured_content["ticker"] == "AAPL"
+    report = result.structured_content
+    assert report["ticker"] == "AAPL"
+    # Dates must reach the MCP client as the same ISO strings REST returns.
+    assert report["newer_filing"]["filing_date"] == "2025-11-01"
+    assert isinstance(report["findings"][0]["created_at"], str)
+    json.dumps(report)
 
 
 @pytest.mark.anyio
-async def test_get_materiality_report_tool_error_when_not_found(monkeypatch):
-    _patch_client(monkeypatch, objects={})
+async def test_get_materiality_report_tool_error_when_not_found(seeded):
 
     async with Client(mcp, raise_exceptions=False) as client:
         result = await client.call_tool("get_materiality_report", {"ticker": "UNKNOWN"})
@@ -96,22 +67,21 @@ async def test_get_materiality_report_tool_error_when_not_found(monkeypatch):
 
 
 @pytest.mark.anyio
-async def test_get_finding_citation_tool_returns_finding(monkeypatch):
-    report = {"ticker": "AAPL", "findings": [{"id": 5, "item_key": "8"}]}
-    _patch_client(monkeypatch, objects={"AAPL.json": report, "_index.json": {"5": "AAPL"}})
+async def test_get_finding_citation_tool_returns_finding(seeded):
+    finding_id = seeded.execute("SELECT min(id) AS id FROM findings").fetchone()["id"]
 
     async with Client(mcp, raise_exceptions=True) as client:
-        result = await client.call_tool("get_finding_citation", {"finding_id": 5})
+        result = await client.call_tool("get_finding_citation", {"finding_id": finding_id})
 
-    assert result.structured_content["id"] == 5
+    assert result.structured_content["id"] == finding_id
+    assert isinstance(result.structured_content["created_at"], str)
 
 
 @pytest.mark.anyio
-async def test_get_finding_citation_tool_error_when_not_found(monkeypatch):
-    _patch_client(monkeypatch, objects={})
+async def test_get_finding_citation_tool_error_when_not_found(seeded):
 
     async with Client(mcp, raise_exceptions=False) as client:
-        result = await client.call_tool("get_finding_citation", {"finding_id": 999})
+        result = await client.call_tool("get_finding_citation", {"finding_id": 999999})
 
     assert result.is_error is True
-    assert "No finding with id 999" in result.content[0].text
+    assert "No finding with id 999999" in result.content[0].text

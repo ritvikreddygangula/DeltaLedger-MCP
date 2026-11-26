@@ -327,7 +327,7 @@
       <a href="#connect" class="secondary">See the MCP tools &rarr;</a>
     </div>
     <div class="code-block hero-cmd">
-      <code>claude mcp add <span class="flag">--transport http</span> materiality-engine https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/mcp</code>
+      <code>claude mcp add <span class="flag">--transport http</span> materiality-engine <span class="mcp-url">https://materiality-engine-api.onrender.com/mcp</span></code>
       <button class="copy-btn" data-copy="mcp">Copy</button>
     </div>
     <div class="exhibit">
@@ -392,7 +392,7 @@
     <p class="sec-desc reveal">Same backend the demo above uses, exposed as three MCP tools over the Streamable HTTP transport.</p>
     <div class="reveal">
       <div class="code-block">
-        <code>claude mcp add <span class="flag">--transport http</span> materiality-engine https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/mcp</code>
+        <code>claude mcp add <span class="flag">--transport http</span> materiality-engine <span class="mcp-url">https://materiality-engine-api.onrender.com/mcp</span></code>
         <button class="copy-btn" data-copy="mcp">Copy</button>
       </div>
       <div class="term-log">
@@ -438,7 +438,7 @@
         <p><strong>Cost-optimized pipeline.</strong> Local line-diffing and content-hash caching cut redundant LLM spend before a single token is billed. <a href="https://github.com/ritvikreddygangula/DeltaLedger-MCP/blob/main/src/agents/diffing.py" target="_blank" rel="noopener">source &rarr;</a></p>
       </div>
       <div class="gloss-item">
-        <p><strong>Structured observability.</strong> Every stage, every OpenAI call, every request logs structured JSON, queryable directly in CloudWatch Logs Insights. <a href="https://github.com/ritvikreddygangula/DeltaLedger-MCP/blob/main/src/observability.py" target="_blank" rel="noopener">source &rarr;</a></p>
+        <p><strong>Structured observability.</strong> Every stage, every OpenAI call, every request logs structured JSON, searchable in the hosting provider's log stream. <a href="https://github.com/ritvikreddygangula/DeltaLedger-MCP/blob/main/src/observability.py" target="_blank" rel="noopener">source &rarr;</a></p>
       </div>
       <div class="gloss-item">
         <p><strong>CI security scanning.</strong> Dependency vulnerability scanning and committed-secret scanning run on every push and pull request. <a href="https://github.com/ritvikreddygangula/DeltaLedger-MCP/blob/main/.github/workflows/ci.yml" target="_blank" rel="noopener">source &rarr;</a></p>
@@ -455,10 +455,13 @@
 </footer>
 
 <script>
-  // Hardcoded on purpose: this is a single-environment personal project with
-  // no build step, not a multi-environment deployment. Update this if the
-  // API stack is ever redeployed under a new URL.
-  const API_BASE = "https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/api";
+  // The one place the backend URL lives (Render web service). Hardcoded on
+  // purpose: a single-environment personal project with no build step. The
+  // REST base, the MCP endpoint and the copy-paste command all derive from it.
+  const API_ORIGIN = "https://materiality-engine-api.onrender.com";
+  const API_BASE = `${API_ORIGIN}/api`;
+  const MCP_URL = `${API_ORIGIN}/mcp`;
+  document.querySelectorAll(".mcp-url").forEach((el) => (el.textContent = MCP_URL));
 
   // list_curated_tickers currently returns every ticker with an ingested
   // filing, not just ones with real findings -- a couple of filers (JPM,
@@ -683,6 +686,13 @@
   }
 
   async function init() {
+    // Render's free tier sleeps after 15 idle minutes, and the first request
+    // after that takes ~30-60s to wake it. Say so instead of looking broken.
+    const wakeNotice = setTimeout(() => {
+      const status = tickerRowEl.querySelector(".status");
+      if (status) status.textContent = "Waking up the API (free-tier server, can take up to a minute)...";
+      if (exhibitMetaEl.textContent.startsWith("loading")) exhibitMetaEl.textContent = "waking up the free-tier API...";
+    }, 5000);
     try {
       const tickersRes = await fetch(`${API_BASE}/tickers`);
       if (!tickersRes.ok) throw new Error(`API returned ${tickersRes.status}`);
@@ -790,6 +800,8 @@
       tickerRowEl.innerHTML = "";
       contentEl.innerHTML = `<div class="error">Failed to load live data: ${escapeHtml(err.message)}</div>`;
       exhibitMetaEl.textContent = "failed to load live data";
+    } finally {
+      clearTimeout(wakeNotice);
     }
   }
 
@@ -809,7 +821,7 @@
   }
 
   function initCopyButtons() {
-    const command = "claude mcp add --transport http materiality-engine https://hev6qqrvhg.execute-api.us-east-2.amazonaws.com/mcp";
+    const command = `claude mcp add --transport http materiality-engine ${MCP_URL}`;
     document.querySelectorAll('.copy-btn[data-copy="mcp"]').forEach((btn) => {
       btn.addEventListener("click", async () => {
         try {

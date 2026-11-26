@@ -1,7 +1,8 @@
 import hashlib
 import json
-import sqlite3
 from datetime import datetime, timezone
+
+import psycopg
 
 
 def compute_cache_key(**parts) -> str:
@@ -14,15 +15,15 @@ def compute_cache_key(**parts) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
-def get_cached(conn: sqlite3.Connection, cache_key: str) -> str | None:
+def get_cached(conn: psycopg.Connection, cache_key: str) -> str | None:
     row = conn.execute(
-        "SELECT output_json FROM llm_cache WHERE cache_key = ?", (cache_key,)
+        "SELECT output_json FROM llm_cache WHERE cache_key = %s", (cache_key,)
     ).fetchone()
     return row["output_json"] if row else None
 
 
 def set_cached(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     cache_key: str,
     kind: str,
     output_json: str,
@@ -31,8 +32,8 @@ def set_cached(
 ) -> None:
     conn.execute(
         """INSERT INTO llm_cache (cache_key, kind, output_json, model, prompt_version, created_at)
-           VALUES (?, ?, ?, ?, ?, ?)
+           VALUES (%s, %s, %s, %s, %s, %s)
            ON CONFLICT (cache_key) DO NOTHING""",
-        (cache_key, kind, output_json, model, prompt_version, datetime.now(timezone.utc).isoformat()),
+        (cache_key, kind, output_json, model, prompt_version, datetime.now(timezone.utc)),
     )
     conn.commit()

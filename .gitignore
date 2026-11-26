@@ -11,15 +11,11 @@ __pycache__/
 # Secrets
 .env
 
-# Local data (SQLite DB, downloaded filings)
+# Local data (backups, golden-set candidates, downloaded filings)
 data/
 
 # OS
 .DS_Store
-
-# AWS SAM local build/deploy cache
-.aws-sam/
-samconfig.toml
 
 # Internal dev notes, architecture drafts, build-history detail -- not for public use.
 docs/

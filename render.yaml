@@ -1,0 +1,20 @@
+# Render Blueprint for the read-only REST + MCP server.
+# Dashboard -> New -> Blueprint -> pick this repo. Render prompts once for
+# DATABASE_URL (sync: false), the Supabase Session pooler URI.
+#
+# Python comes from .python-version (3.12, latest patch). Render adds uv by
+# itself because uv.lock is at the repo root.
+services:
+  - type: web
+    name: materiality-engine-api
+    runtime: python
+    plan: free
+    # API-only dependencies: the pipeline group (openai, scipy, langgraph,
+    # ...) is never imported by the server, so it stays out of the build.
+    buildCommand: uv sync --frozen --no-dev --no-group pipeline
+    startCommand: uv run --no-sync uvicorn src.api.app:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    autoDeployTrigger: commit
+    envVars:
+      - key: DATABASE_URL
+        sync: false
