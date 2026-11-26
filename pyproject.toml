@@ -14,6 +14,8 @@ dependencies = [
     "fastapi>=0.141.1",
     "mangum>=0.22.0",
     "mcp>=2.2.0",
+    "psycopg-pool>=3.3.3",
+    "psycopg[binary]>=3.3.9",
     "pydantic>=2.13.5",
 ]
 

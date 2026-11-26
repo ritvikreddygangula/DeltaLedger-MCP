@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import os
-import sqlite3
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import TYPE_CHECKING
+
+import psycopg
+from psycopg.rows import dict_row
 
 from .schema import SCHEMA_DDL
 
@@ -12,41 +13,40 @@ if TYPE_CHECKING:
     # Pipeline-only types, needed here only for annotations on
     # pipeline-only functions (insert_findings, upsert_filing,
     # insert_sections). This module is also imported by the read-only
-    # API/MCP layer, which deliberately excludes the heavy pipeline
-    # dependencies (openai, beautifulsoup4, etc.) to stay under Lambda's
-    # package size limit -- importing these eagerly at module load would
-    # break that Lambda at cold start with ModuleNotFoundError.
+    # API/MCP server, whose deploy installs without the heavy pipeline
+    # dependency group (openai, beautifulsoup4, etc.). Importing these
+    # eagerly at module load would crash that server at startup with
+    # ModuleNotFoundError.
     from ..agents.verifier import VerifiedFinding
     from ..connectors.base import FilingMetadata
     from ..connectors.section_parser import TaggedSection
 
-# Local-only storage for ingestion intermediates (parsed sections, the LLM
-# cache) -- never read by the deployed API/MCP Lambda, which serves
-# `findings` from S3 instead (see docs/DROP_RDS_SPEC.md). One person, one
-# machine, no concurrent writers, so SQLite is simpler than a real database
-# server for this without giving anything up.
-DEFAULT_DB_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "materiality.db"
+# One Postgres database (Supabase in production) for everything: the
+# pipeline scripts write filings/sections/findings/llm_cache, and the
+# deployed API/MCP server reads filings/findings straight from the same
+# tables. Nothing gets exported or synced in between.
 
 
-def get_connection(db_path: str | Path | None = None) -> sqlite3.Connection:
-    db_path = db_path or os.environ.get("DATABASE_PATH") or DEFAULT_DB_PATH
-    Path(db_path).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")  # off by default in SQLite, unlike Postgres
-    return conn
+def get_connection(dsn: str | None = None) -> psycopg.Connection:
+    dsn = dsn or os.environ.get("DATABASE_URL")
+    if not dsn:
+        raise RuntimeError(
+            "DATABASE_URL is required (a Postgres connection string -- the Supabase "
+            "Session pooler URI in production). See .env.example."
+        )
+    return psycopg.connect(dsn, row_factory=dict_row)
 
 
-def init_db(conn: sqlite3.Connection) -> None:
-    conn.executescript(SCHEMA_DDL)
+def init_db(conn: psycopg.Connection) -> None:
+    conn.execute(SCHEMA_DDL)
     conn.commit()
 
 
-def upsert_filing(conn: sqlite3.Connection, filing: FilingMetadata) -> int:
+def upsert_filing(conn: psycopg.Connection, filing: FilingMetadata) -> int:
     row = conn.execute(
         """INSERT INTO filings
                (cik, ticker, form_type, filing_date, accession_number, source_url, fetched_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?)
+           VALUES (%s, %s, %s, %s, %s, %s, %s)
            ON CONFLICT (accession_number) DO UPDATE SET fetched_at = excluded.fetched_at
            RETURNING id""",
         (
@@ -56,7 +56,7 @@ def upsert_filing(conn: sqlite3.Connection, filing: FilingMetadata) -> int:
             filing.filing_date,
             filing.accession_number,
             filing.source_url,
-            datetime.now(timezone.utc).isoformat(),
+            datetime.now(timezone.utc),
         ),
     ).fetchone()
     conn.commit()
@@ -64,35 +64,35 @@ def upsert_filing(conn: sqlite3.Connection, filing: FilingMetadata) -> int:
 
 
 def insert_sections(
-    conn: sqlite3.Connection, filing_id: int, sections: list[TaggedSection]
+    conn: psycopg.Connection, filing_id: int, sections: list[TaggedSection]
 ) -> None:
     cur = conn.cursor()
-    cur.execute("DELETE FROM sections WHERE filing_id = ?", (filing_id,))
+    cur.execute("DELETE FROM sections WHERE filing_id = %s", (filing_id,))
     cur.executemany(
-        "INSERT INTO sections (filing_id, item_key, heading_text, body_text) VALUES (?, ?, ?, ?)",
+        "INSERT INTO sections (filing_id, item_key, heading_text, body_text) VALUES (%s, %s, %s, %s)",
         [(filing_id, s.item_key, s.heading_text, s.body_text) for s in sections],
     )
     conn.commit()
 
 
-def get_filing_sections(conn: sqlite3.Connection, filing_id: int) -> list[dict]:
-    rows = conn.execute("SELECT * FROM sections WHERE filing_id = ?", (filing_id,)).fetchall()
+def get_filing_sections(conn: psycopg.Connection, filing_id: int) -> list[dict]:
+    rows = conn.execute("SELECT * FROM sections WHERE filing_id = %s", (filing_id,)).fetchall()
     return [dict(r) for r in rows]
 
 
 def get_filings_for_ticker(
-    conn: sqlite3.Connection, ticker: str, form_type: str = "10-K", limit: int = 2
+    conn: psycopg.Connection, ticker: str, form_type: str = "10-K", limit: int = 2
 ) -> list[dict]:
     rows = conn.execute(
-        """SELECT * FROM filings WHERE ticker = ? AND form_type = ?
-           ORDER BY filing_date DESC LIMIT ?""",
+        """SELECT * FROM filings WHERE ticker = %s AND form_type = %s
+           ORDER BY filing_date DESC LIMIT %s""",
         (ticker.upper(), form_type, limit),
     ).fetchall()
     return [dict(r) for r in rows]
 
 
 def insert_findings(
-    conn: sqlite3.Connection,
+    conn: psycopg.Connection,
     older_filing_id: int,
     newer_filing_id: int,
     verified_findings: list[VerifiedFinding],
@@ -110,7 +110,7 @@ def insert_findings(
                 older_excerpt, newer_excerpt, excerpt_verified, confidence,
                 verifier_reasoning, final_tier, classifier_model, classifier_prompt_version,
                 verifier_model, verifier_prompt_version, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+           VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)""",
         [
             (
                 older_filing_id,
@@ -129,7 +129,7 @@ def insert_findings(
                 vf.classifier_prompt_version,
                 vf.verifier_model,
                 vf.verifier_prompt_version,
-                datetime.now(timezone.utc).isoformat(),
+                datetime.now(timezone.utc),
             )
             for vf in verified_findings
         ],
@@ -138,7 +138,7 @@ def insert_findings(
 
 
 def get_findings_for_filing_pair(
-    conn: sqlite3.Connection, older_filing_id: int, newer_filing_id: int
+    conn: psycopg.Connection, older_filing_id: int, newer_filing_id: int
 ) -> list[dict]:
     """Returns only the most recent pipeline run's findings for this filing
     pair, not the full history. insert_findings is deliberately append-only
@@ -153,16 +153,12 @@ def get_findings_for_filing_pair(
     rows = conn.execute(
         """WITH latest AS (
                SELECT MAX(created_at) AS max_created_at FROM findings
-               WHERE older_filing_id = ? AND newer_filing_id = ?
+               WHERE older_filing_id = %s AND newer_filing_id = %s
            )
            SELECT f.* FROM findings f, latest
-           WHERE f.older_filing_id = ? AND f.newer_filing_id = ?
-             AND datetime(f.created_at) >= datetime(latest.max_created_at, '-10 seconds')
+           WHERE f.older_filing_id = %s AND f.newer_filing_id = %s
+             AND f.created_at >= latest.max_created_at - interval '10 seconds'
            ORDER BY f.id""",
         (older_filing_id, newer_filing_id, older_filing_id, newer_filing_id),
     ).fetchall()
-    findings = [dict(r) for r in rows]
-    for f in findings:
-        if "excerpt_verified" in f:
-            f["excerpt_verified"] = bool(f["excerpt_verified"])  # SQLite has no native boolean
-    return findings
+    return [dict(r) for r in rows]
